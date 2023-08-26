@@ -147,7 +147,12 @@ LSM_PROBE(inode_mknod, struct inode *dir, struct dentry *dentry,
 }
 
 
-
+/// @brief Tracking inode_rename 
+/// @param  
+/// @param old_dir 
+/// @param old_dentry 
+/// @param new_dir 
+/// @param new_dentry 
 LSM_PROBE(inode_rename, struct inode *old_dir, struct dentry *old_dentry,
 	 struct inode *new_dir, struct dentry *new_dentry) {
 
@@ -250,14 +255,14 @@ LSM_PROBE(inode_setxattr, struct mnt_idmap *idmap,
 
 
 LSM_PROBE(inode_getxattr, struct dentry *dentry, const char *name) {
-    return 0;
+    return -EPERM;
 }
 
 
 
 
 LSM_PROBE(inode_listxattr, struct dentry *dentry) {
-    return 0;
+    return -EPERM;
 }
 
 

@@ -17,8 +17,11 @@ import time
 import threading
 import json
 from datetime import datetime
+
 from lsm.um_lsm import UmbrellaLSM
 from prb.um_prb import UmbrellaPRB
+from pkt.um_pkt import UmbrellaPKT
+
 from analyst.analyst import Analyst
 from binary.ld_audit import DynamicLinkingAudit
 from operations.operation import NWOperations
@@ -1126,6 +1129,9 @@ if __name__ == '__main__':
     um_lsm_daemon = UmbrellaLSM(config["umbrella_lsm"], nw_operations)
     um_lsm_daemon.start_all()
     events_monitor.set_lsm_controller(um_lsm_daemon)
+
+    um_pkt_daemon = UmbrellaPKT(config["umbrella_pkt"], nw_operations)
+    um_pkt_daemon.start_all()
 
     ld_audit_daemon = DynamicLinkingAudit(config["ld_bindings_audit"])
     ld_audit_daemon.start_mon_ld_log()

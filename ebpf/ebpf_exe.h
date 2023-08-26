@@ -216,18 +216,9 @@ static int ebpf_concat_path(struct exec_file_path *cur_exec_file_path, char *pat
         return -EACCES;
     }
 
-//    for (int i = cur_exec_file_path->depth - 1; i >= 0; i--) {       
-//    }
-    int depth = cur_exec_file_path->depth - 1;
-    if (depth >= 0) {
-        ebpf_strncat(path, "/", len, 2);
-        ebpf_strncat(path, cur_exec_file_path->path[depth], len, sizeof(cur_exec_file_path->path[depth]));    
-    }
-
-    depth = depth - 1;
-    if (depth >= 0) {
-        ebpf_strncat(path, "/", len, 2);
-        ebpf_strncat(path, cur_exec_file_path->path[depth], len, sizeof(cur_exec_file_path->path[depth]));    
+    for (int i = cur_exec_file_path->depth - 1; i >= 0; i--) {       
+        ebpf_strncat(path, "/", len, 2);        
+        ebpf_strncat(path, cur_exec_file_path->path[i], len, sizeof(cur_exec_file_path->path[i]));    
     }
 
     return 0;

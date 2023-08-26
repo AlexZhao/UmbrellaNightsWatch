@@ -6,6 +6,14 @@
 #ifndef EBPF_STR
 #define EBPF_STR
 
+#ifndef barrier
+#define barrier() asm volatile("" ::: "memory")
+#endif
+
+#ifndef barrier_var
+#define barrier_var(var) asm volatile("" : "+r"(var))
+#endif
+
 #define EBPF_MEMSET_THRESHOLD 32
 #define EBPF_STR_MAXIMUM_LEN 256
 
@@ -22,6 +30,7 @@ static int ebpf_strncpy(char *tgt, const char *src, int len) {
         }
     }
 
+    barrier_var(len);
     *(tgt + len - 1) = 0;
 
     return len;
@@ -60,7 +69,6 @@ static void ebpf_memset(char *target, char data, int len) {
         return;
     }
 
-    #pragma clang loop unroll(full)
     for (int i = 0; i < len; i ++) {
         *(target + i) = data;
     }
@@ -83,7 +91,6 @@ static int ebpf_strncmp(char *target, char *src, int len) {
         return -1;
     }
 
-    #pragma clang loop unroll(full)
     for (int i = 0; i < len; i++) {
         if (*(target + i) != *(src + i)) {
             return i + 1;
@@ -139,6 +146,7 @@ static int ebpf_strncat(char *target, const char *src, int len, int src_len) {
         copy_len = src_len;
     }
 
+    barrier_var(start);
     int tgt_str_len = ebpf_strncpy(target + start, src, copy_len);
     
     return start + tgt_str_len;
@@ -149,7 +157,6 @@ static void ebpf_dumphex(char *target, int len) {
         return;
     }
 
-    #pragma clang loop unroll(full)
     for (int i = 0; i < len; i ++) {
 
     }

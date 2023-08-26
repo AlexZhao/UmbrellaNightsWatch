@@ -34,6 +34,8 @@ ebpf_shield = """
 #include <linux/file.h>
 #include <linux/fdtable.h>
 
+#include <net/sock.h>
+
 BPF_RINGBUF_OUTPUT(lsm_events, 1 << 4);
 
 #define MAXIMUM_LOOP 10
@@ -111,6 +113,7 @@ LSM_PROBE(bpf, int cmd, union bpf_attr *attr, unsigned int size) {
     }
 }
 
+#ifdef SHIELD_PERSISTENT
 // nw avoid be traced by any
 LSM_PROBE(ptrace_traceme, struct task_struct *parent) {
     struct task_struct *current_task = (struct task_struct *)bpf_get_current_task();
@@ -173,12 +176,14 @@ LSM_PROBE(ptrace_access_check, struct task_struct *child, unsigned int mode) {
     return 0;
 }
 
-// Silent nw daemon process    
+// Silent nw daemon process, exceptional:
+//    Netlink traffic     
 LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int addrlen) {
     struct task_struct *current_task = (struct task_struct *)bpf_get_current_task();
     struct task_struct *parent_task = NULL;
     pid_t pid;
-
+    struct sock *sk = sock->sk;
+    
     if (current_task == NULL) {
         return -EPERM;
     }
@@ -187,7 +192,12 @@ LSM_PROBE(socket_connect, struct socket *sock, struct sockaddr *address, int add
     for (int i = 0; i < MAXIMUM_LOOP; i++) {
         if (bpf_probe_read_kernel(&pid, sizeof(pid), &current_task->pid) == 0) {
             if (pid == RUNTIME_MON_PID) {
-                return -EPERM;
+            
+                if (sk->sk_family != AF_NETLINK)
+                    return -EPERM;
+                else
+                    return 0;
+            
             } else if (pid == 1) {
                 return 0;
             }
@@ -209,6 +219,7 @@ LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size) {
     struct task_struct *parent_task = NULL;
     pid_t pid;
     socket_state state;
+    struct sock *sk = sock->sk;
     
     if (current_task == NULL) {
         return -EPERM;
@@ -218,11 +229,16 @@ LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size) {
     for (int i = 0; i < MAXIMUM_LOOP; i++) {
         if (bpf_probe_read_kernel(&pid, sizeof(pid), &current_task->pid) == 0) {
             if (pid == RUNTIME_MON_PID) {
+                
+                if (sk->sk_family == AF_NETLINK) 
+                    return 0;
+
                 bpf_probe_read_kernel(&state, sizeof(state), &sock->state);
                 if (state != SS_CONNECTED)
                     return -EPERM;
                 else
                     return 0;
+            
             } else if (pid == 1) {
                 return 0;
             }
@@ -243,7 +259,7 @@ LSM_PROBE(socket_sendmsg, struct socket *sock, struct msghdr *msg, int size) {
 //     LSM_PROBE(task_kill, reject all signals the final sheild to protect NW be killed by any userspace process  
 //     LSM_PROBE(sched,  reject all the operation can adjust NW to work in low priority and keep NW works as realtime process      
 
-#ifdef SHIELD_PERSISTENT
+//#ifdef SHIELD_PERSISTENT
 LSM_PROBE(task_kill, struct task_struct *p, struct kernel_siginfo *info, int sig, const struct cred *cred) {
     struct task_struct *current_task = (struct task_struct *)bpf_get_current_task();
     struct task_struct *parent_task = NULL;
