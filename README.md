@@ -3,6 +3,28 @@
 NightsWatch is a toy Linux System monitoring daemon process which will record everything of the system accessed      
 
 It is in the core of Defense in Depth of Umbrella design, it used to control the DMZ security overall      
+with modification NW can to all different types of security control on modern Linux system   
+
+
+## Defense in Depth   
+
+Defense in Depth is an idea of design network/system security based on layered/Point view    
+The basic idea is security risk always existed, on different systems there will be different security risks existed, this attribute can be used for security enhancement itself       
+
+Main access to a security enhanced network is through network itself, network security is layered controlled, no matter    
+it equipped with Zero Trust Principle of based on tradditional external/internal network split it all based on layered design   
+with different defense in depth layer, it control different part of access, e.g public external provided service, internal network cross   
+host access, from internal to external access, ... these are all layered controlled by defense in depth with different manner.    
+
+internal network can be categorized based on it access behavior, it will provide a security baseline for all the connected devices       
+
+for the host which is doing the security control/audit work, it needs extra security controlled whch is based on Linux system monitoring     
+1. it is not a virus scanning software      
+2. it based on all applications running on the system are suspect and it based on the configuration and also application's behavior analysis to decide what is a risk    
+3. it runtime monitoring the system behavior to secure itself     
+
+it reuquired centralized realtime analysis of the overall system behavior of all the security controlling points       
+
 
 ## Process Level Monitoring this is the last layer to direct enhance os    
     This used for DMZ device to monitor itself's connectivities
@@ -33,7 +55,7 @@ It is in the core of Defense in Depth of Umbrella design, it used to control the
   tcpdump works well why not     
   1. non promiscuous mode capture packet (direct device driver, NIC card level mode will receive many not dested packet to the host)   
   2. better configurable filter to only hook out interesting packets     
-  3. it is not about performance, it is about to not impact on existing working mode but to hookout required stuffs for analysis    
+  3. it is not about performance, it is about to not impact on existing working mode but only hookout required stuffs for analysis    
 
 ### Firefox    
    1. DNS Resolver threads detect many IP not works as DNS server    
