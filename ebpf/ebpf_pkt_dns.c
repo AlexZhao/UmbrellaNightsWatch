@@ -33,13 +33,7 @@ struct metadata {
     u16 pkt_offset;
 };
 
-/// @brief  Perf DNS packet filter out 
-/// @param ctx 
-/// @return 
-int xdp_dns_filter(struct xdp_md *ctx) {
-    void* data_end = (void*)(long)ctx->data_end;
-    void* data = (void*)(long)ctx->data;
-
+static int parse_dns_packet(void *data, void* data_end, void *ctx) {
     struct ethhdr *eth = data;
     
     long *value;
@@ -51,7 +45,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
 
     // Not a Ethernet packet
     if (data + nh_off  > data_end)
-        return XDP_PASS;
+        return 0;
 
     h_proto = eth->h_proto;
 
@@ -61,7 +55,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
         vhdr = data + nh_off;
         nh_off += sizeof(struct vlan_hdr);
         if (data + nh_off > data_end)
-            return XDP_PASS;
+            return 0;
 
         h_proto = vhdr->h_vlan_encapsulated_proto;
     }
@@ -73,7 +67,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
         vhdr = data + nh_off;
         nh_off += sizeof(struct vlan_hdr);
         if (data + nh_off > data_end)
-            return XDP_PASS;
+            return 0;
         
         h_proto = vhdr->h_vlan_encapsulated_proto;
     }
@@ -83,7 +77,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
         
         nh_off += sizeof(struct iphdr);
         if (data + nh_off > data_end)
-            return XDP_PASS;
+            return 0;
         
         h_proto = iph->protocol;
     
@@ -92,7 +86,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
 
         nh_off += sizeof(struct ipv6hdr);
         if (data + nh_off > data_end)
-            return XDP_PASS;
+            return 0;
 
         // Warning: this is not full impl, ip6h next header may have next_hop which provide segment routing
         // this is a short path no other IPv6 ext header in the packet 
@@ -105,7 +99,7 @@ int xdp_dns_filter(struct xdp_md *ctx) {
 
         nh_off += sizeof(struct udphdr);
         if (data + nh_off > data_end)
-            return XDP_PASS;
+            return 0;
 
         // DNS filter out
         if (udph->source == htons(53)) {
@@ -129,5 +123,29 @@ int xdp_dns_filter(struct xdp_md *ctx) {
         }
     }
 
+    return 0;
+}
+
+/// @brief  Perf DNS packet filter out 
+/// @param ctx 
+/// @return 
+int xdp_dns_filter(struct xdp_md *ctx) {
+    void* data_end = (void*)(long)ctx->data_end;
+    void* data = (void*)(long)ctx->data;
+
+    parse_dns_packet(data, data_end, ctx);
+
     return XDP_PASS;
+}
+
+
+/// @brief  TC classification filter monitoring egress packets match DNS
+/// @return 
+int cls_dns_filter(struct __sk_buff *skb) {
+    void *data = (void *)(long)skb->data;
+	void *data_end = (void *)(long)skb->data_end;
+
+    parse_dns_packet(data, data_end, skb);
+
+	return TC_ACT_UNSPEC;
 }

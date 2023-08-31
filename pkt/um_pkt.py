@@ -1,5 +1,8 @@
 #!/usr/bin/python
+#
+# Apache License V2
 # Copyright Alex Zhao
+#
 # Simplified version of Umbrella
 #  Packet filter
 #  sockfilter  socket_fd
@@ -13,6 +16,8 @@ import json
 import sys
 import threading
 import ctypes as ct
+import time
+import pyroute2
 
 from datetime import datetime
 
@@ -31,6 +36,7 @@ class eBPFPKTLog:
 
         if "file" in ebpf_log:
             try:
+                self.log_file_name = ebpf_log["file"]
                 self.log_file = open(ebpf_log["file"], "a")
             except BaseException as e:
                 print("Failed to open ebpf lsm log for {}  {}".format(ebpf_name, ebpf_log))
@@ -43,6 +49,46 @@ class eBPFPKTLog:
             except BaseException as e:
                 print("Wrong configuration of log flush threshold")
     
+        self.truncate_interval_secs = 0
+        self.active_pkt_log_daemon = False
+
+        if "truncate" in ebpf_log:
+            self.truncate_interval_secs = 60 * 60
+            try:
+                if ebpf_log["truncate"].endswith("day"):
+                    end_of_int = ebpf_log["truncate"].find("day")
+                    self.truncate_interval_secs = int(ebpf_log["truncate"][:end_of_int]) * 24 * 60 * 60
+                elif ebpf_log["truncate"].endswith("hour"):
+                    end_of_int = ebpf_log["truncate"].find("hour")
+                    self.truncate_interval_secs = int(ebpf_log["truncate"][:end_of_int]) * 60 * 60
+                elif ebpf_log["truncate"].endswith("min"):
+                    end_of_int = ebpf_log["truncate"].find("min")
+                    self.truncate_interval_secs = int(ebpf_log["truncate"][:end_of_int]) * 60
+            except BaseException as e:
+                print("parse log file truncate failed ", e, " default value 1 hour used")
+            self.active_pkt_log_daemon = True
+
+        if self.active_pkt_log_daemon:
+            self.pkt_log_daemon_th = threading.Thread(name="pkt_log", target=self.pkt_log_daemon_thread)
+            self.pkt_log_daemon_th.start()
+
+    def pkt_log_daemon_thread(self):
+        """
+        Packet log monitoring thread
+        """
+        truncate_pass_time = 0
+        while self.active_pkt_log_daemon:
+            if self.truncate_interval_secs > 0 and truncate_pass_time > self.truncate_interval_secs:
+                try:
+                    self.log_file.truncate(0)
+                except BaseException as e:
+                    print("Not able to truncate packet capture log file  ", self.log_file_name, e)
+                truncate_pass_time = 0
+
+            # Every minutes is the minimum interval
+            time.sleep(60)
+            truncate_pass_time += 60
+
     def __exit__(self):
         self.log_file.close()
 
@@ -122,22 +168,38 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
     # Attach eBPF to sock or XDP
     try:
         error_msg = None
-        if "pkt_type" in ebpf_config:
-            match ebpf_config["pkt_type"]:
-                case "xdp":
-                    if "pkt_parser" in ebpf_config:
-                        fn = pkt_filter_bpf.load_func(ebpf_config["pkt_parser"], BPF.XDP, None)
-                        if "interfaces" in ebpf_config:
-                            for interface in ebpf_config["interfaces"]:
-                                pkt_filter_bpf.attach_xdp(interface, fn, BPF.XDP_FLAGS_SKB_MODE)
-                                print("Attached {} on {}".format(ebpf_config["pkt_parser"], interface))
-                        else:
-                            error_msg = "No configured interfaces  for xdp to attach"
-                    else:
-                        error_msg = "No configured pkt_parser  function entry for xdp"
-                case _:
-                    error_msg = "Unkonw pkt_type in config it need to be xdp/..."
-        
+        if "pkt_parsers" in ebpf_config:
+            for pkt_config in ebpf_config["pkt_parsers"]:
+                print(pkt_config)
+                if "pkt_type" in pkt_config:
+                    try:
+                        match pkt_config["pkt_type"]:
+                            case "xdp":
+                                if "pkt_parser" in pkt_config:
+                                    fn = pkt_filter_bpf.load_func(pkt_config["pkt_parser"], BPF.XDP, None)
+                                    if "interfaces" in pkt_config:
+                                        for interface in pkt_config["interfaces"]:
+                                            pkt_filter_bpf.attach_xdp(interface, fn, BPF.XDP_FLAGS_SKB_MODE)
+                                            print("Attached {} on {}".format(pkt_config["pkt_parser"], interface))
+                                    else:
+                                        error_msg = "No configured interfaces  for xdp to attach"
+                                else:
+                                    error_msg = "No configured pkt_parser  function entry for xdp"
+                            case "classifier":
+                                if "pkt_parser" in pkt_config:
+                                    fn = pkt_filter_bpf.load_func(pkt_config["pkt_parser"], BPF.SCHED_CLS, None)
+                                    if "interfaces" in pkt_config:
+                                        ipr = pyroute2.IPRoute()
+                                        for interface in pkt_config["interfaces"]:
+                                            intf = ipr.link_lookup(ifname=interface)[0]
+                                            # Not working well with add sfq and filter, simple filter only 
+                                            ipr.tc("replace", "sfq", intf, "1:")
+                                            # Filter require to have cls_bpf and sch_sfq kernel mod
+                                            ipr.tc("replace-filter", "bpf", intf, ":1", parent="1:", fd=fn.fd, name=fn.name, classid=1)
+                            case _:
+                                error_msg = "Unkonw pkt_type in config it need to be xdp/..."
+                    except BaseException as e:
+                        print("Attach packet filter to interface failed with exception ", e)
         if error_msg is not None:
             print("wrong configured pkt filter ebpf {} with config {}, erro {}".format(ebpf_name, ebpf_config, error_msg))
             con_pipe.send('''
