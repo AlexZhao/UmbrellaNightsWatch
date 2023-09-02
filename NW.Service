@@ -1,5 +1,5 @@
 [Unit]
-Description=Network Access Audit,Dynamic Forwarding Configuration Engine
+Description=Application Behavior, Packet Monitoring, MAC based Linux security enhancement system
 After=multi-user.target
 StartLimitIntervalSec=300
 StartLimitBurst=10

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //
 // eBPF based DNS packets filter to understand
 // network access target without gateway
@@ -126,7 +126,7 @@ static int parse_dns_packet(void *data, void* data_end, void *ctx) {
     return 0;
 }
 
-/// @brief  Perf DNS packet filter out 
+/// @brief XDP packet ingress perf DNS packet filter out 
 /// @param ctx 
 /// @return 
 int xdp_dns_filter(struct xdp_md *ctx) {

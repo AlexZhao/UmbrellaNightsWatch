@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //  eBPF Configuration log for all probes
 #ifndef EBPF_LOG
 #define EBPF_LOG

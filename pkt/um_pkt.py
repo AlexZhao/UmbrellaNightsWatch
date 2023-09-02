@@ -1,13 +1,14 @@
 #!/usr/bin/python
 #
-# Apache License V2
-# Copyright Alex Zhao
+# Apache License 2.0
+# Copyright Zhao Zhe (Alex)
 #
-# Simplified version of Umbrella
-#  Packet filter
+#  Packet filter of NW
 #  sockfilter  socket_fd
 #  xdpfilter perf_output (xdp_output)
-# attach to interface
+#  attach to interface
+#
+#  NW runntime modifiable 
 #
 from bcc import BPF
 
@@ -21,8 +22,8 @@ import pyroute2
 
 from datetime import datetime
 
-from multiprocessing import Process, Pipe;
-from multiprocessing.connection import wait;
+from multiprocessing import Process, Pipe
+from multiprocessing.connection import wait
 
 from pkt.pkt2json import PKT2JSON
 
@@ -170,7 +171,6 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
         error_msg = None
         if "pkt_parsers" in ebpf_config:
             for pkt_config in ebpf_config["pkt_parsers"]:
-                print(pkt_config)
                 if "pkt_type" in pkt_config:
                     try:
                         match pkt_config["pkt_type"]:
@@ -252,7 +252,17 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
             cmd_json = json.loads(cmd)
             try:
                 match cmd_json["cmd"]:
-                    
+                    case "list_all_items":
+                        result = dict({"cmd_execute_result": "success"})                    
+                        con_pipe.send(json.dumps(result))                        
+                    case "exit":
+                        print(ebpf_name, "Received command exit, it should be initiated by reload")
+                        con_pipe.send('''
+                        {
+                            "cmd_execute_result": "sucess"
+                        }
+                        ''')
+                        return                        
                     case _:
                         con_pipe.send("{'cmd_execute_result': 'unknown command'}")
             except BaseException as e:
@@ -262,7 +272,6 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                     "error": "update command not correct format %s"
                 }
                 ''' % (cmd_json))
-                print("Not able to process {}".format(cmd_json))
     except KeyboardInterrupt:
         sys.exit()
         
@@ -280,7 +289,6 @@ class eBPFPKTDaemon:
 
         self.daemon_proc = Process(target=pkt_daemon, name=ebpf_name, args=(child_pipe, child_log_pipe, ebpf_name, ebpf_config, ))
 
-
     def start(self):
         """
         Start eBPF packet filter
@@ -290,6 +298,64 @@ class eBPFPKTDaemon:
     def get_log_pipe(self):
         return self.log_pipe
 
+    def list_all_items(self):
+        cmd = '''
+        { 
+            "cmd":"list_all_items"
+        }
+        '''
+        self.con_pipe.send(cmd)
+        return self.con_pipe.recv()        
+
+    def reload(self, ebpf_name, ebpf_config):
+        """
+        1. create new ebpf instance
+        2. remove existed ebpf instance
+        3. no break time of the PKT module
+        """
+        try:
+            log_pipe, child_log_pipe = Pipe()
+            parent_pipe, child_pipe = Pipe()
+            reloaded_daemon_process = Process(target=pkt_daemon, name=ebpf_name, args=(child_pipe, child_log_pipe, ebpf_name, ebpf_config, ))
+            reloaded_daemon_process.start()
+
+            initialization_status = parent_pipe.recv()
+            status = json.loads(initialization_status)
+            if status["initialization"] != "finished":
+                return None, {'reload_pkt': 'failed', "pkt": ebpf_name}
+        except BaseException as e:
+            return None, {'reload_pkt': 'failed', "pkt": ebpf_name}
+
+        cmd = """
+        {
+            "cmd": "exit"
+        }
+        """
+        self.con_pipe.send(cmd)
+        self.daemon_proc.terminate()
+        self.daemon_proc.join()
+        self.con_pipe.close()
+        self.log_pipe.close()
+
+        self.con_pipe = parent_pipe
+        self.log_pipe = log_pipe
+        self.daemon_proc = reloaded_daemon_process
+
+        return log_pipe, {'reload_pkt' : 'success', 'pkt': ebpf_name}
+
+    def stop(self):
+        cmd = """
+        {
+            "cmd": "exit"
+        }
+        """
+        self.con_pipe.send(cmd)
+        self.daemon_proc.terminate()
+        self.daemon_proc.join()
+        self.con_pipe.close()
+        self.log_pipe.close()
+
+        return self.log_pipe
 
 class UmbrellaPKT:
     def __init__(self, ebpf_files, operations=None):
@@ -353,3 +419,86 @@ class UmbrellaPKT:
 
         self.pkt_mon_th = threading.Thread(name="pkt_mon", target=self.pkt_mon_loop)
         self.pkt_mon_th.start()
+
+    def list_all(self):
+        """
+        List all PKT mods
+        """
+        result = []
+        for ebpf_name, ebpf_pkt in self.ebpf_daemons.items():
+            result.append(ebpf_name)
+        
+        return result 
+
+    def execute_setup_operation(self, ebpf_config):
+        if self.operations is None:
+            return
+        
+        config_sets = dict({})
+        if "config_sets" in ebpf_config:
+            for config_name, configs in ebpf_config["config_sets"].items():
+                config_sets[config_name] = configs
+
+        if "operation" in ebpf_config:
+            if "setup" in ebpf_config["operation"]:
+                for setup in ebpf_config["operation"]["setup"]:
+                    for op_name, op_config in setup.items():
+                        for op, param in op_config.items():
+                            if isinstance(param, str):
+                                if param in config_sets:
+                                    self.operations.execute_operation(op_name, op, config_sets[param])
+                                else:
+                                    self.operations.execute_operation(op_name, op, param)
+                            else:
+                                self.operations.execute_operation(op_name, op, param)
+
+    def reload_log_pipe(self):
+        self.pkt_monitor_trigger_pipe.send("Refresh log monitor")
+
+    def add_ebpf_pkt(self, new_pkt, ebpf_pkt_config):
+        """
+        Add eBPF Packet Filter
+        """
+        if new_pkt not in self.ebpf_daemons:
+            self.execute_setup_operation(ebpf_pkt_config)
+            new_ebpf_pkt = eBPFPKTDaemon(new_pkt, ebpf_pkt_config)
+            self.ebpf_daemons[new_pkt] = new_ebpf_pkt
+            self.ebpf_daemons[new_pkt].start()
+
+            self.pkt_monitor_pipes.append(new_ebpf_pkt.get_log_pipe())
+            self.reload_log_pipe()
+            return { 'add_pkt': 'success', "pkt": new_pkt }
+        else:
+            return { "add_pkt": "failed", "already_existed": new_pkt}       
+
+    def del_ebpf_pkt(self, del_pkt):
+        """
+        Delete eBPF Packet Filter
+        """
+        if del_pkt not in self.ebpf_daemons:
+            return { 'del_pkt': 'failed', 'pkt': del_pkt}
+        else:
+            log_pipe = self.ebpf_daemons[del_pkt].stop()
+            self.ebpf_daemons.pop(del_pkt)
+            return { 'del_pkt': 'success', 'pkt': del_pkt}
+
+    def list_details_of_ebpf(self, ebpf_name):
+        if ebpf_name in self.ebpf_daemons:
+            return self.ebpf_daemons[ebpf_name].list_all_items()
+        else:
+            return "{}"
+    
+    def reload_ebpf_pkt(self, reload_pkt, ebpf_pkt_config):
+        """
+        Reload already loaded eBPF PKT, runtime update
+        """
+        if reload_pkt in self.ebpf_daemons:
+            log_pipe, res = self.ebpf_daemons[reload_pkt].reload(reload_pkt, ebpf_pkt_config)
+            if log_pipe != None:
+                self.pkt_monitor_pipes.append(log_pipe)
+                self.reload_log_pipe()
+                return res
+            else:
+                return res
+        else:
+            return {'reload_pkt': "failed", "not_existed": reload_pkt}       

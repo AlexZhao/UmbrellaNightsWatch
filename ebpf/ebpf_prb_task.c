@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: 2022
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
+//
 // eBPF based syscall Clone Monitor used to build process tree
 //  for application like firefox it has many threads/process
 // to build a complete tree of the application monitoring clone
 // for the access relations to build the monitoring tree
+//
 #include <linux/sched.h>
 
 BPF_RINGBUF_OUTPUT(ring_fork_log, 16);

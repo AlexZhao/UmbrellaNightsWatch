@@ -1,5 +1,7 @@
 # UmbrellaNightsWatch   
 
+WARNING/CRITICAL: Configuration of NW will easily lock you out of Linux system
+
 NightsWatch is a toy Linux System monitoring daemon process which will record everything of the system accessed      
 
 It is in the core of Defense in Depth of Umbrella design, it used to control the DMZ security overall      

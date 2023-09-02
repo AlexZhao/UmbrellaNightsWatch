@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //  eBPF Configuration interactive data struct with userspace daemon
 #ifndef EBPF_INTF
 #define EBPF_INTF

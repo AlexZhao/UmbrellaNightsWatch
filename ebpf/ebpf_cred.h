@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
+//
 // eBPF Credential
 //   1. credential check
 // WARNING:
 //   2. If RANDSTRUCT enabled, below will not working
+//
 #ifndef EBPF_CRED
 #define EBPF_CRED
 

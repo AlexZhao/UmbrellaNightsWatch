@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: 2022
-// Copyright Alex Zhao
-// TCP Out Connect track back to process
+// Copyright Zhao Zhe (Alex)
+//
+// TCP/UDP egress connection track back to application
+//
 #include <linux/sched.h>
 #include <linux/socket.h>
 #include <linux/in.h>

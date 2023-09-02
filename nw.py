@@ -1,15 +1,17 @@
 #!/usr/bin/python
-# Apache License V2
+#
+# Apache License 2.0
 # Copyright Zhao Zhe(Alex)
-# Runtime Network and Behavior Monitoring on DMZ and Satelite
+#
+# Runtime Network and Application Behavior Monitoring on DMZ
 # 
-# Simplified version of runtime kernel monitor compare to umbrella
-# based on python without large scale performance consideration
+# Umbrealla NW
 #
-# ebpf_task_mon
-#    all activities initiated from comm task ID will be recorded 
+#   with Umbrella Firewall
+#        Umbrella Agent
+#        Umbrella Telescope
 #
-# Consider rename this as microscope to co-work with telescope
+#   To works as a basic design of DiD (Defense in Depth)
 #
 import sys
 import os
@@ -487,6 +489,14 @@ class ApplicationProfile:
         return result
 
 class EventsMonitor:
+    """
+    Events Monitor is the main daemon process to tracking all loaded eBPF subsystems including:
+        eBPF probes
+        eBPF LSM MACs
+        eBPF Packet Filters
+    Also it provides the interface to attach analysis module
+    """
+    
     def __init__(self):
         self.debug = False
         self.mon_proc_details = dict({})
@@ -503,6 +513,7 @@ class EventsMonitor:
         self.config = dict({})
         self.prb = None
         self.lsm = None
+        self.pkt = None
         self.analyst = None
         self.mon_ignore_list = dict({})
         self.operations = NWOperations()
@@ -564,6 +575,12 @@ class EventsMonitor:
     def get_lsm_controller(self):
         return self.lsm
 
+    def set_pkt_controller(self, pkt):
+        self.pkt = pkt
+
+    def get_pkt_controller(self):
+        return self.pkt
+
     def set_analyst_engine(self, analyst):
         self.analyst = analyst
         if self.lsm:
@@ -580,6 +597,12 @@ class EventsMonitor:
 
     def is_lsm_active(self):
         if self.lsm != None:
+            return True
+        else:
+            return False
+
+    def is_pkt_active(self):
+        if self.pkt != None:
             return True
         else:
             return False
@@ -844,7 +867,6 @@ class LSM(Resource):
                 return {'result': 'failed', 'details': "Not supported command {}".format(command)}
             
 
-
 class LSMOp(Resource):
     def get(self, lsm_ebpf):
         """
@@ -1030,13 +1052,113 @@ class PRBOp(Resource):
         else:
             return {'result':'failed', 'details': 'PRB not activate'}
 
+class PKT(Resource):
+    def get(self):
+        """
+        Check is PKT supported under RuntimeMonitor
+        """
+        if events_monitor.is_pkt_active():
+            result = events_monitor.get_pkt_controller().list_all()
+            return {'result': 'success', 'details': result}
+        else:
+            return {'result': 'success', 'details': 'NO LSM activate'}
+    def post(self):
+        """
+        Post to add/del PKT packet filter modules 
+        TODO add/delete operation need to recorded
+        """
+        command = request.form['cmd']
+        match command:
+            case "add_ebpf_pkt":
+                try:
+                    new_pkt = request.form['pkt']
+                    if "config" in request.form:
+                        config_file = request.form['config']
+                    else:
+                        config_file = events_monitor.get_config_file()
+                        
+                    config_content = open(config_file)
+                    config = json.load(config_content)
+    
+                    if "umbrella_pkt" in config:
+                        pkt_config = config["umbrella_pkt"]
+                    else:
+                        pkt_config = config      
+
+                    if new_pkt in pkt_config:
+                        ebpf_pkt_config = pkt_config[new_pkt]
+                    else:
+                        return {'result': 'failed', 'details': 'addd_pkt, no configuration existed for {}'.format(new_pkt)}
+
+                    result = events_monitor.get_pkt_controller().add_ebpf_pkt(new_pkt, ebpf_pkt_config)
+                    events_monitor.record_audit_log("add_ebpf_pkt : {}  [{}]".format(new_pkt, ebpf_pkt_config))
+                    return result
+                except BaseException as e:
+                    return {'result': 'failed', 'details': 'add_pkt, not correct command format {}'.format(e)}
+            case "del_ebpf_pkt":
+                try:
+                    del_pkt = request.form['pkt']
+                    result = events_monitor.get_pkt_controller().del_ebpf_pkt(del_pkt)
+                    events_monitor.record_audit_log("add_ebpf_pkt : {} ".format(del_pkt))
+                    return result
+                except BaseException as e:
+                    return {'result': 'failed', 'details': 'del_pkt, not correct command format {}'.format(e)}
+            case _:
+                return {'result': 'failed', 'details': "Not supported command {}".format(command)}
+
+class PKTOp(Resource):
+    def get(self, pkt_ebpf):
+        """
+        Check PKT status
+        """
+        if events_monitor.is_pkt_active():
+            result = events_monitor.get_pkt_controller().list_details_of_ebpf(pkt_ebpf)
+            return {'result': 'success', 'details': result}
+        else:
+            return {'result': 'failed', 'details': 'PKT not activate'}
+    def post(self, pkt_ebpf):
+        """
+        Config PKT
+        """
+        if events_monitor.is_pkt_active():
+            command = request.form['cmd']
+            match command:
+                case "reload_ebpf_pkt":
+                    try:
+                        if "config" in request.form:
+                            config_file = request.form['config']
+                        else:
+                            config_file = events_monitor.get_config_file()
+
+                        config_content = open(config_file)
+                        config = json.load(config_content)
+
+                        if "umbrella_pkt" in config:
+                            pkt_config = config["umbrella_pkt"]
+                        else:
+                            pkt_config = config
+                    
+                        if pkt_ebpf in pkt_config:
+                            ebpf_pkt_config = pkt_config[pkt_ebpf]
+                        else:
+                            return {'result':'failed', 'details': 'reload_pkt, no configuration existed for {}'.format(pkt_ebpf)}
+                    
+                        result = events_monitor.get_pkt_controller().reload_ebpf_pkt(pkt_ebpf, ebpf_pkt_config)
+                        events_monitor.record_audit_log("reload_ebpf_pkt: {} [{}]".format(pkt_ebpf, ebpf_pkt_config))
+                        return result
+                    except BaseException as e:
+                        return {'result':'failed', 'details': 'reload_pkt, not correct command format {}'.format(e)}
+                case _: 
+                    return {'result': 'failed', 'details': "Not supported command {}".format(command)}
+        else:
+            return {'result':'failed', 'details': 'PKT not activate'}
+
 app = Flask(__name__)
 api = Api(app)
 
 api.add_resource(DumpMonDetails, '/dump_mon')
 api.add_resource(ListMonProc, '/list_mon')
 api.add_resource(ListDevAccess, '/list_dev_access')
-
 
 # Dynamic modifiable LSM 
 api.add_resource(LSM, '/lsm')
@@ -1045,6 +1167,10 @@ api.add_resource(LSMOp, '/lsm/<string:lsm_ebpf>')
 # Dynamic modifiable PRB
 api.add_resource(PRB, '/prb')
 api.add_resource(PRBOp, '/prb/<string:prb_ebpf>')
+
+# Dynamic modifiable PKT
+api.add_resource(PKT, '/pkt')
+api.add_resource(PKTOp, '/pkt/<string:pkt_ebpf>')
 
 if __name__ == '__main__':
     sched_params = os.sched_param(os.sched_get_priority_max(os.SCHED_RR))
@@ -1122,16 +1248,20 @@ if __name__ == '__main__':
 
     nw_operations = NWOperations()
 
+    # eBPF Probes application behavior monitoring
     um_prb_daemon = UmbrellaPRB(config["umbrella_prb"], nw_operations)
     um_prb_daemon.start_all()
     events_monitor.set_prb_controller(um_prb_daemon)
 
+    # eBPF LSM MAC
     um_lsm_daemon = UmbrellaLSM(config["umbrella_lsm"], nw_operations)
     um_lsm_daemon.start_all()
     events_monitor.set_lsm_controller(um_lsm_daemon)
 
+    # eBPF Packet filter to replace tcpdump, hook on egress TC and ingress XDP
     um_pkt_daemon = UmbrellaPKT(config["umbrella_pkt"], nw_operations)
     um_pkt_daemon.start_all()
+    events_monitor.set_pkt_controller(um_pkt_daemon)
 
     ld_audit_daemon = DynamicLinkingAudit(config["ld_bindings_audit"])
     ld_audit_daemon.start_mon_ld_log()

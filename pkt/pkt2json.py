@@ -1,14 +1,14 @@
 #!/usr/bin/python
-# Apache License V2
-# Copyright Alex Zhao
+#
+# Apache License 2.0
+# Copyright Zhao Zhe (Alex)
+#
 # Packet parse into Json
 #
 # enum packet type supported by pkt2json 
-import json
 import ctypes as ct
 
 from dnslib import DNSRecord
-from dnslib.bimap import Bimap, BimapError
 from dnslib import QTYPE, CLASS
 
 ETH_P_IP = 0x0800

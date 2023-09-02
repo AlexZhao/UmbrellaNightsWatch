@@ -1,22 +1,25 @@
 #!/usr/bin/python
-# Apache License V2
-# Copyright Alex Zhao
-# Simplified version of Umbrella
-#  Probes
-# Not able to be modified during runtime
+#
+# Apache License 2.0
+# Copyright Zhao Zhe (Alex)
+#
+# NW Probes
+#   tracepoint
+#   raw_tracepoint
+#   ...
+# 
+# It can be loaded and modify unload during NW running 
 #
 from bcc import BPF
 import ctypes
-import bcc
 import json
 import os
-
 
 import sys
 import ctypes as ct
 
-from multiprocessing import Process, Pipe;
-from multiprocessing.connection import wait;
+from multiprocessing import Process, Pipe
+from multiprocessing.connection import wait
 
 from datetime import datetime
 
@@ -137,7 +140,10 @@ def prb_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
 
                 match cmd_json["cmd"]:
                     case "list_all_items":
-                        result = dict({"tables": [], "prbs": []})
+                        result = dict({
+                            "cmd_execute_result": "success",
+                            "tables": [], 
+                            "prbs": []})
                     
                         for tn in attached_bpf:
                             result["tables"].append(tn)
@@ -219,7 +225,7 @@ class eBPFPRBDaemon:
         """
         1. create new ebpf instance
         2. remove existed ebpf instance
-        3. no break time of the LSM module
+        3. no break time of the Probe module
         """
         try:
             log_pipe, child_log_pipe = Pipe()
@@ -303,6 +309,7 @@ class UmbrellaPRB:
                                     self.operations.execute_operation(op_name, op, param)
                             else:
                                 self.operations.execute_operation(op_name, op, param)
+
     def list_all(self):
         """
         List all LSM mods

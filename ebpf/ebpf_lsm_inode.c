@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //  inode related security hook
 //  VFS control
 #include <linux/user_namespace.h>

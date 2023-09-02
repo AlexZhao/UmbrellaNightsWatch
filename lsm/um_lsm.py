@@ -1,10 +1,12 @@
 #!/usr/bin/python
-# Apache License V2
-# Copyright Alex Zhao
-# Simplified version of Umbrella
-#   MAC/LSM system security control
 #
-# Not able to be modified during runtime
+# Apache License 2.0
+# Copyright Zhao Zhe (Alex)
+#
+#
+# MAC/LSM system security control
+# 
+#
 from bcc import BPF
 import threading
 import time
@@ -18,8 +20,8 @@ from datetime import datetime
 from databridge.dispatcher import Dispatcher
 import databridge
 
-from multiprocessing import Process, Pipe;
-from multiprocessing.connection import wait;
+from multiprocessing import Process, Pipe
+from multiprocessing.connection import wait
 
 ebpf_shield = """
 #include <linux/sched.h>

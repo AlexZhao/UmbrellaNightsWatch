@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: 2022
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
+//
 // Configured File Access for eBPF
+//
 #include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/fdtable.h>

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: 2022
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
+//
 // kmod load/unload
-//  Monitoring the kmod load/unload
+// Monitoring the kmod load/unload
+//
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/module.h>

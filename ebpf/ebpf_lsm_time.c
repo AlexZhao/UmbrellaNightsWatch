@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //
 // eBPF based Security Module
 //  Time Control
+//
 #include <linux/errno.h>
 #include <linux/time.h>
 #include <linux/time64.h>

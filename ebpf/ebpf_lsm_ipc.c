@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //  IPC: sem, shm, msg all consider as IPC
 #include <linux/ipc.h>
 #include <linux/sem.h>

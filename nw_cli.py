@@ -1,12 +1,16 @@
 #!/usr/bin/python
-# Apache License V2
-# Copyright Alex Zhao
+#
+# Apache License 2.0
+# Copyright Zhao Zhe (Alex)
+#
 # NightsWatch CLI interface
+#
+# CLI will based on RBAC
 # 
 import click
 from click_shell import shell
-import subprocess;
-import json;
+import subprocess
+import json
 
 
 class BufferedData :
@@ -273,6 +277,60 @@ def add_prb(prb, config=None):
         print("Error when add ebpf PRB")
         print(output)
 
+@nw_cli.command()
+def list_pkt():
+    curl_str = "{}/pkt".format(TELE_URI)
+    list = subprocess.Popen(['curl', '-s', curl_str], stdout=subprocess.PIPE)
+    output = list.stdout.read().decode("utf-8")
+    try:
+        list_res = json.loads(output)
+        if list_res['result'] == "success":
+            print("  Equipped PKT -->")
+            for lsm in list_res['details']:
+                print("        ", lsm)
+        else:
+            print("  Failed to get loaded PKTs")
+    except:
+        print("Error when list eBPF PKT")
+        print(output)
+
+@nw_cli.command()
+@click.option("--pkt", required = True)
+@click.option("--config")
+def add_pkt(pkt, config=None):
+    curl_str = "{}/pkt".format(TELE_URI)
+    if config != None:
+        add = subprocess.Popen(['curl', '-s', '-X', 'POST', '-d', 'cmd=add_ebpf_pkt', '-d', 'pkt={}'.format(pkt), '-d', 'config={}'.format(config), curl_str], stdout=subprocess.PIPE)
+    else:
+        add = subprocess.Popen(['curl', '-s', '-X', 'POST', '-d', 'cmd=add_ebpf_pkt', '-d', 'pkt={}'.format(pkt), curl_str], stdout=subprocess.PIPE)
+
+    output = add.stdout.read().decode("utf-8")
+    try:
+        add_res = json.loads(output)
+        if add_res["add_pkt"] == "success":
+            print("   Add [{}] Success".format(pkt))
+        else:
+            print("   Add [{}] Failed".format(pkt))
+    except:
+        print("Error when add ebpf PKT")
+        print(output)
+
+@nw_cli.command()
+@click.option("--pkt", required = True)
+def del_pkt(pkt):
+    curl_str = "{}/pkt".format(TELE_URI)
+    del_pkt = subprocess.Popen(['curl', '-s', '-X', 'POST', '-d', 'cmd=del_ebpf_pkt', '-d', 'pkt={}'.format(pkt), curl_str], stdout=subprocess.PIPE)
+
+    output = del_pkt.stdout.read().decode("utf-8")
+    try:
+        del_res = json.loads(output)
+        if del_res["del_pkt"] == "success":
+            print("   Delete [{}] Success".format(pkt))
+        else:
+            print("   Delete [{}] Failed".format(pkt))
+    except:
+        print("Error when delete ebpf PKT")
+        print(output)
 
 @nw_cli.command()
 @click.option("--app", required = True)

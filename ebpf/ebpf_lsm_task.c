@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: 2023
-// Copyright Alex Zhao
+// Copyright Zhao Zhe (Alex)
 //
-// eBPF based Security Module
+// eBPF based Security Module to control Linux task
 // 
 //
 #include <asm/signal.h>
