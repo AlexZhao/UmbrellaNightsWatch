@@ -1,5 +1,7 @@
 # UmbrellaNightsWatch   
 
+English | [简体中文](README-CN.md)    
+
 WARNING/CRITICAL: Configuration of NW will easily lock you out of Linux system
 
 NightsWatch is a toy Linux System monitoring daemon process which will record everything of the system accessed      
