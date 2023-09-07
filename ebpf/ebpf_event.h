@@ -61,7 +61,7 @@ static int put_ebpf_event_log(ebpf_event *event, const char *log, const unsigned
         event->sections[index][0] = type_of_log;
         event->sections[index][1] = len;
 
-        if (len > MAXIMUM_EBPF_EVENT_SECTION_LEN - 2) {
+        if (len >= MAXIMUM_EBPF_EVENT_SECTION_LEN - 2) {
             return -E2BIG;
         }
 

@@ -27,6 +27,8 @@ from multiprocessing.connection import wait
 
 from pkt.pkt2json import PKT2JSON
 
+from analyst.provider import DataProvider
+
 class eBPFPKTLog:
     def __init__(self, ebpf_name, ebpf_log):
         self.log_name = ebpf_name
@@ -358,13 +360,17 @@ class eBPFPKTDaemon:
         return self.log_pipe
 
 class UmbrellaPKT:
-    def __init__(self, ebpf_files, operations=None):
+    def __init__(self, ebpf_files, operations=None, events_monitor=None, msg_topics=None):
         """
         Initiate of UmbrellaPKT userspace 
         """
         self.ebpf_daemons = dict({})
         self.ebpf_pkt_logs = dict({})
+        self.providers = dict({})
+
         self.operations = operations    
+        self.events_monitor = events_monitor
+        self.topics = msg_topics
 
         pkt_monitor_reload_trigger, pkt_pipe = Pipe()
         self.pkt_monitor_trigger_pipe = pkt_monitor_reload_trigger
@@ -372,6 +378,7 @@ class UmbrellaPKT:
         for ebpf_name, ebpf_config in ebpf_files.items():
             try:
                 self.ebpf_daemons[ebpf_name] = eBPFPKTDaemon(ebpf_name, ebpf_config)
+                self.update_providers(ebpf_name, ebpf_config)
                 if "log" in ebpf_config:
                     ebpf_log = eBPFPKTLog(ebpf_name, ebpf_config["log"])                    
                     self.ebpf_pkt_logs[ebpf_name] = ebpf_log
@@ -383,6 +390,15 @@ class UmbrellaPKT:
         for ebpf_name, ebpf_daemon in self.ebpf_daemons.items():
             self.pkt_monitor_pipes.append(ebpf_daemon.get_log_pipe())
 
+    def set_events_monitor(self, events_monitor):
+        self.events_monitor = events_monitor
+
+    def update_providers(self, ebpf_name, ebpf_config):
+        if "providers" in ebpf_config:
+            if ebpf_name in self.providers:
+                self.providers[ebpf_name].update_config(ebpf_config["providers"])
+            else:
+                self.providers[ebpf_name] = DataProvider(ebpf_name, ebpf_config["providers"])
 
     def start_all(self):
         """
@@ -398,9 +414,13 @@ class UmbrellaPKT:
             while self.pkt_monitor_pipes:
                 for pipe in wait(self.pkt_monitor_pipes):
                     try:
-                        event_item = pipe.recv()                    
+                        event_item = pipe.recv()                        
                         pkt_str = str(event_item)
                         pkt = pkt_str[:pkt_str.find("->")].strip()
+                        
+                        if pkt in self.providers:
+                            self.events_monitor.consume_pkt_event(self.providers[pkt].convert(pkt_str[pkt_str.find("->")+3:]))                    
+
                         if pkt not in self.ebpf_pkt_logs:
                             print(pkt_str)
                         else:
@@ -465,6 +485,8 @@ class UmbrellaPKT:
             self.ebpf_daemons[new_pkt] = new_ebpf_pkt
             self.ebpf_daemons[new_pkt].start()
 
+            self.update_providers(new_pkt, ebpf_pkt_config)
+
             self.pkt_monitor_pipes.append(new_ebpf_pkt.get_log_pipe())
             self.reload_log_pipe()
             return { 'add_pkt': 'success', "pkt": new_pkt }
@@ -480,6 +502,7 @@ class UmbrellaPKT:
         else:
             log_pipe = self.ebpf_daemons[del_pkt].stop()
             self.ebpf_daemons.pop(del_pkt)
+            self.providers.pop(del_pkt)
             return { 'del_pkt': 'success', 'pkt': del_pkt}
 
     def list_details_of_ebpf(self, ebpf_name):
@@ -495,6 +518,7 @@ class UmbrellaPKT:
         if reload_pkt in self.ebpf_daemons:
             log_pipe, res = self.ebpf_daemons[reload_pkt].reload(reload_pkt, ebpf_pkt_config)
             if log_pipe != None:
+                self.update_providers(reload_pkt, ebpf_pkt_config)
                 self.pkt_monitor_pipes.append(log_pipe)
                 self.reload_log_pipe()
                 return res

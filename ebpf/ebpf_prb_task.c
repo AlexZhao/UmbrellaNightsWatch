@@ -8,7 +8,7 @@
 //
 #include <linux/sched.h>
 
-BPF_RINGBUF_OUTPUT(ring_fork_log, 16);
+BPF_RINGBUF_OUTPUT(prb_logs, 16);
 
 #define FORK_EVENT_TYPE_CLONE 1
 #define FORK_EVENT_TYPE_CLONE3 2

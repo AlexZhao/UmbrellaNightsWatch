@@ -7,7 +7,7 @@
 #include <linux/errno.h>
 #include "ebpf/ebpf_str.h"
 
-#define MAXIMUM_EBPF_LOG_LEN 6
+#define MAXIMUM_EBPF_LOG_LEN 8
 #define MAXIMUM_EBPF_LOG_SECTION_LEN 32
 
 typedef struct ebpf_prb_log {
@@ -22,7 +22,9 @@ typedef struct ebpf_prb_log {
 #define TYPE_U32 2
 #define TYPE_I64 3
 #define TYPE_U64 4
-#define TYPE_SOCKADDR 5
+#define TYPE_SOCKADDR_4 5
+#define TYPE_SOCKADDR_6 6
+#define TYPE_SOCKADDR_UN 7
 
 /// @brief 
 /// @param log 
@@ -48,12 +50,13 @@ static __always_inline int put_ebpf_prb_log(struct ebpf_prb_log *log, const char
         return -EACCES;
     }
 
-    log->sections[current_section][0] = type_of_log;
-    log->sections[current_section][1] = len;
-
-    if (len > MAXIMUM_EBPF_LOG_SECTION_LEN - 2) {
+    if (len >= MAXIMUM_EBPF_LOG_SECTION_LEN - 2) {
         return -E2BIG;
     }
+
+    barrier_var(log->sections[current_section][0]);
+    log->sections[current_section][0] = type_of_log;    
+    log->sections[current_section][1] = len;
 
     if (type_of_log == TYPE_STR) {
         ebpf_strncpy(&log->sections[current_section][2], log_str, len);

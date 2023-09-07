@@ -17,27 +17,60 @@ import os
 
 import sys
 import ctypes as ct
+import socket
 
 from multiprocessing import Process, Pipe
 from multiprocessing.connection import wait
+
+from analyst.provider import DataProvider
 
 from datetime import datetime
 
 import threading
 
-class ebpf_prb_log(ctypes.Structure):
-    _fields_ = [("ebpf_log_section", ctypes.c_int32),
-                ("timestamp", ctypes.c_uint64),
-                ("func", ctypes.c_byte * 32),
-                ("sections", (ctypes.c_byte * 32) * 6)]
+class ebpf_prb_log(ct.Structure):
+    _fields_ = [("ebpf_log_section", ct.c_int32),
+                ("timestamp", ct.c_uint64),
+                ("func", ct.c_byte * 32),
+                ("sections", (ct.c_byte * 32) * 8)]
 
+class sockaddr_in(ct.Structure):
+    _fields_ = [("sa_family", ct.c_ushort),  # sin_family
+                ("sin_port", ct.c_ushort),
+                ("sin_addr", ct.c_ubyte * 4),
+                ("__pad", ct.c_byte * 8)]    # struct sockaddr_in is 16 bytes
+
+class sockaddr_in6(ct.Structure):
+    _fields_ = [("sa_family", ct.c_ushort),
+                ("sin6_port", ct.c_ushort),
+                ("sin6_flow", ct.c_uint32),
+                ("sin6_addr", ct.c_uint16 * 8),
+                ("sin6_scope_id", ct.c_uint32)]
+
+class sockaddr_un(ct.Structure):
+    _fields_ = []
+
+def from_sockaddr(sockaddr):
+    addr = tuple(c for c in sockaddr.sin_addr)
+    addr_str = '%d.%d.%d.%d' % addr 
+    return "{}:{}".format(addr_str, socket.ntohs(sockaddr.sin_port))  
+
+def from_sockaddr6(sockaddr):
+    addr = tuple(socket.ntohs(c) for c in sockaddr.sin6_addr)
+    addr_str = '%4x:%4x:%4x:%4x:%4x:%4x:%4x:%4x' % addr 
+    return "{}:{}".format(addr_str, socket.ntohs(sockaddr.sin6_port))
+
+def from_sockaddrun(sockaddr):
+    return "TODO"
 
 #define TYPE_STR 0
 #define TYPE_I32 1
 #define TYPE_U32 2
 #define TYPE_I64 3
 #define TYPE_U64 4
-#define TYPE_SOCKADDR 5
+#define TYPE_SOCKADDR_4 5
+#define TYPE_SOCKADDR_6 6
+#define TYPE_SOCKADDR_UN 7
 
 def convert_bytes_to_str(bytes):
     try:
@@ -52,6 +85,12 @@ def convert_bytes_to_str(bytes):
                 return str(ct.cast(ct.byref(bytes, 2), ct.POINTER(ct.c_int64)).contents.value)
             case 4:
                 return str(ct.cast(ct.byref(bytes, 2), ct.POINTER(ct.c_uint64)).contents.value)
+            case 5:
+                return from_sockaddr(ct.cast(ct.byref(bytes, 2), ct.POINTER(sockaddr_in)).contents)
+            case 6:
+                return from_sockaddr6(ct.cast(ct.byref(bytes, 2), ct.POINTER(sockaddr_in6)).contents)
+            case 7:
+                return "UnixSocket"
             case _: 
                 return "Unknown"
     except BaseException as e:
@@ -261,12 +300,16 @@ class eBPFPRBDaemon:
 
 
 class UmbrellaPRB:
-    def __init__(self, ebpf_files, operations = None):
+    def __init__(self, ebpf_files, operations=None, events_monitor=None, msg_topics=None):
         """
         Initialize Umbrella PRB userspace
         """
         self.ebpf_daemons = dict({})
+        self.providers = dict({})
+
         self.operations = operations
+        self.events_monitor = events_monitor
+        self.topics = msg_topics
 
         log_reload_trigger, log_pipe = Pipe()
         self.log_trigger_pipe = log_reload_trigger
@@ -275,11 +318,22 @@ class UmbrellaPRB:
         for ebpf_name, ebpf_config in ebpf_files.items():
             self.execute_setup_operation(ebpf_config)
             self.ebpf_daemons[ebpf_name] = eBPFPRBDaemon(ebpf_name, ebpf_config)
+            self.update_providers(ebpf_name, ebpf_config)
 
         self.log_monitor_pipes = []
         self.log_monitor_pipes.append(log_pipe)
         for ebpf_name, ebpf_daemon in self.ebpf_daemons.items():
             self.log_monitor_pipes.append(ebpf_daemon.get_log_pipe())
+
+    def update_providers(self, ebpf_name, ebpf_config):
+        if "providers" in ebpf_config:
+            if ebpf_name in self.providers:
+                self.providers[ebpf_name].update_config(ebpf_config["providers"])
+            else:
+                self.providers[ebpf_name] = DataProvider(ebpf_name, ebpf_config["providers"])
+
+    def set_events_monitor(self, events_monitor):
+        self.events_monitor = events_monitor
 
     def start_all(self):
         for _, ebpf_prb in self.ebpf_daemons.items():
@@ -326,7 +380,10 @@ class UmbrellaPRB:
                 for pipe in wait(self.log_monitor_pipes):
                     try:
                         event_item = pipe.recv()
-                        # Consume event log
+                        event_str = str(event_item)                        
+                        prb = event_str[event_str.find("[")+1:event_str.find("]")].strip()
+                        if prb in self.providers:
+                            self.events_monitor.consume_prb_event(self.providers[prb].convert(event_str[event_str.find("["):]))
                     except BaseException as e:
                         self.log_monitor_pipes.remove(pipe)
         except KeyboardInterrupt:
@@ -348,6 +405,8 @@ class UmbrellaPRB:
             self.ebpf_daemons[new_prb] = new_ebpf_prb
             self.ebpf_daemons[new_prb].start()
 
+            self.update_providers(new_prb, ebpf_prb_config)
+
             self.log_monitor_pipes.append(new_ebpf_prb.get_log_pipe())
             self.reload_log_pipe()
             return { 'add_prb': 'success', "prb": new_prb }
@@ -364,6 +423,7 @@ class UmbrellaPRB:
         if reload_prb in self.ebpf_daemons:
             log_pipe, res = self.ebpf_daemons[reload_prb].reload(reload_prb, ebpf_prb_config)
             if log_pipe != None:
+                self.update_providers(reload_prb, ebpf_prb_config)
                 self.log_monitor_pipes.append(log_pipe)
                 self.reload_log_pipe()
                 return res

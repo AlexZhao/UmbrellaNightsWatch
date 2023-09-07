@@ -13,7 +13,7 @@
 #include "ebpf/ebpf_exe.h"
 #include "ebpf/ebpf_str.h"
 
-BPF_RINGBUF_OUTPUT(ring_file_log, 32);
+BPF_RINGBUF_OUTPUT(prb_logs, 32);
 
 #define MAX_FILENAME_LEN 128
 #define MAX_COMMNAME_LEN 64

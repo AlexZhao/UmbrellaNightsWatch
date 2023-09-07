@@ -23,6 +23,9 @@ import databridge
 from multiprocessing import Process, Pipe
 from multiprocessing.connection import wait
 
+from analyst.provider import DataProvider
+
+
 ebpf_shield = """
 #include <linux/sched.h>
 #include <linux/errno.h>
@@ -743,14 +746,17 @@ class eBPFLSMLog:
                 self.flush_cnt = self.flush_threshold
 
 class UmbrellaLSM:
-    def __init__(self, ebpf_files, operations=None):
+    def __init__(self, ebpf_files, operations=None, events_monitor=None, msg_topics=None):
         """
         Initiate of UmbrellaLSM userspace 
         """
         self.ebpf_daemons = dict({})
         self.ebpf_lsm_logs = dict({})
+        self.providers = dict({})
+
         self.operations = operations
-        self.analyst = None
+        self.events_monitor = events_monitor
+        self.topics = msg_topics
 
         log_reload_trigger, log_pipe = Pipe()
         self.log_trigger_pipe = log_reload_trigger
@@ -759,17 +765,29 @@ class UmbrellaLSM:
             self.execute_setup_operation(ebpf_config)
             try:
                 self.ebpf_daemons[ebpf_name] = eBPFLSMDaemon(ebpf_name, ebpf_config)
+                self.update_providers(ebpf_name, ebpf_config)
+
                 if "log" in ebpf_config:
                     ebpf_log = eBPFLSMLog(ebpf_name, ebpf_config["log"])                    
                     self.ebpf_lsm_logs[ebpf_name] = ebpf_log
-            except:
-                print("Failed to load {}", ebpf_name)
+            except BaseException as e:
+                print("Failed to load %s  %s" % ebpf_name, e)
 
         self.log_monitor_pipes = []
         self.log_monitor_pipes.append(log_pipe)
         for ebpf_name, ebpf_daemon in self.ebpf_daemons.items():
             self.log_monitor_pipes.append(ebpf_daemon.get_log_pipe())
 
+    def set_events_monitor(self, events_monitor):
+        self.events_monitor = events_monitor
+
+
+    def update_providers(self, ebpf_name, ebpf_config):
+        if "providers" in ebpf_config:
+            if ebpf_name in self.providers:
+                self.providers[ebpf_name].update_config(ebpf_config["providers"])
+            else:
+                self.providers[ebpf_name] = DataProvider(ebpf_name, ebpf_config["providers"])
 
     def execute_setup_operation(self, ebpf_config):
         if self.operations is None:
@@ -793,9 +811,6 @@ class UmbrellaLSM:
                             else:
                                 self.operations.execute_operation(op_name, op, param)
 
-    def set_analyst(self, analyst):
-        self.analyst = analyst
-
     def set_nw_operations(self, operations):
         self.operations = operations
 
@@ -811,11 +826,12 @@ class UmbrellaLSM:
                 self.ebpf_daemons.pop(new_lsm)
                 return { 'add_lsm': 'failed', "lsm": new_lsm }
 
-            
             if "log" in ebpf_lsm_config:
                 ebpf_log = eBPFLSMLog(new_lsm, ebpf_lsm_config["log"])                    
                 self.ebpf_lsm_logs[new_lsm] = ebpf_log
             
+            self.update_providers(new_lsm, ebpf_lsm_config)
+
             self.log_monitor_pipes.append(new_ebpf_lsm.get_log_pipe())
             self.reload_log_pipe()
             return { 'add_lsm': 'success', "lsm": new_lsm }
@@ -836,6 +852,7 @@ class UmbrellaLSM:
                     ebpf_log = eBPFLSMLog(reload_lsm, ebpf_lsm_config["log"])                    
                     self.ebpf_lsm_logs[reload_lsm] = ebpf_log
 
+                self.update_providers(reload_lsm, ebpf_lsm_config)
                 self.log_monitor_pipes.append(log_pipe)
                 self.reload_log_pipe()
                 return res
@@ -849,9 +866,13 @@ class UmbrellaLSM:
             while self.log_monitor_pipes:
                 for pipe in wait(self.log_monitor_pipes):
                     try:
-                        event_item = pipe.recv()                    
+                        event_item = pipe.recv()
                         log_str = str(event_item)
                         lsm = log_str[:log_str.find("->")].strip()
+
+                        if lsm in self.providers:
+                            self.events_monitor.consume_lsm_event(self.providers[lsm].convert(log_str[log_str.find("["):]))
+                        
                         if lsm not in self.ebpf_lsm_logs:
                             print(log_str)
                         else:
@@ -859,7 +880,6 @@ class UmbrellaLSM:
                             lsm specific log processing
                             """
                             self.ebpf_lsm_logs[lsm].log(log_str)
-
                     except BaseException as e:
                         self.log_monitor_pipes.remove(pipe)
         except KeyboardInterrupt:

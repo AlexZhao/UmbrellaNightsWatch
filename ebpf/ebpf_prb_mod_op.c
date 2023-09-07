@@ -41,6 +41,7 @@ RAW_TRACEPOINT_PROBE(module_load) {
     
     pid_t pid;
     bpf_probe_read_kernel(&pid, sizeof(pid), &task->pid);
+    barrier_var(pid);
     put_ebpf_prb_log(log, (const char *)&pid, sizeof(pid), TYPE_I32);
 
     ebpf_memset(app_name, 0, sizeof(app_name));
@@ -70,7 +71,7 @@ RAW_TRACEPOINT_PROBE(module_free) {
     }
     initialize_ebpf_log(log, "module_free");
 
-    char app_name[32];
+    char app_name[30];
     ebpf_memset(app_name, 0, sizeof(app_name));
     if (ebpf_get_task_app_name(task, app_name, sizeof(app_name)) != 0) {
         prb_logs.ringbuf_discard(log, 0);
@@ -80,6 +81,7 @@ RAW_TRACEPOINT_PROBE(module_free) {
     
     pid_t pid;
     bpf_probe_read_kernel(&pid, sizeof(pid), &task->pid);
+    barrier_var(pid);
     put_ebpf_prb_log(log, (const char *)&pid, sizeof(pid), TYPE_I32);
 
     ebpf_memset(app_name, 0, sizeof(app_name));
