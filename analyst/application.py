@@ -15,47 +15,16 @@ class ApplicationProfile:
                                 "UNIX":{}})
         self.execv_cmd = dict({})
         self.seldom_syscall = dict({})
-        self.file_record_pattern = StringTrie(separator="/")
         
         # recording each created process instance alive period
         self.pids = dict({})
-
-        self.file_record_pattern["/home"] = 4
-        self.file_record_pattern["/var/tmp"] = 5
-        self.file_record_pattern["/var/log"] = 5
-        self.file_record_pattern["/var/cache"] = 5
-        self.file_record_pattern["/tmp"] = 3
-        self.file_record_pattern["/dev/shm"] = 4
-        self.file_record_pattern["/usr/share"] = 4
-        self.file_record_pattern["/usr/local/share"] = 5
-
-    def need_record_full_file(self, file_loc):
-        key, val = self.file_record_pattern.longest_prefix(file_loc)
-        if key:
-            try:
-                if file_loc.endswith(".py"):
-                    return file_loc
-                else:
-                    file_loc = file_loc[:file_loc.rfind('/')]
-                
-                    depth = val
-                    idx = -1
-                    for i in range(0, depth):
-                        idx = file_loc.find("/", idx + 1)
-                        if idx == -1:
-                            return file_loc                    
-                    return file_loc[:idx]
-            except:
-                return file_loc 
-        else:
-            return file_loc
 
     def update_file_access(self, event):
         """
         Update file access by process
         """
         if "file" in event:
-            file_loc = self.need_record_full_file(event["file"])
+            file_loc = event["file"]
             if self.file_access.has_key(file_loc):
                 self.file_access[file_loc] = self.file_access[file_loc] + 1
             else:

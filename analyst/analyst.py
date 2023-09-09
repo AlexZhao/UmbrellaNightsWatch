@@ -8,6 +8,8 @@
 #  consume data from EventMonitor (collected from probes)
 #  initiate reaction to UmLsm
 import json
+
+from pygtrie import StringTrie
 from threading import Lock
 
 from analyst.application import ApplicationProfile
@@ -24,6 +26,12 @@ class AppProfileAnalyst:
 
         self.monitored_apps_lock = Lock()
         self.monitored_apps = dict({})
+
+        self.file_access_ignore_patterns = StringTrie(separator="/")
+
+        if "file_access_ignore_patterns" in config:
+            for key, val in config["file_access_ignore_patterns"].items():
+                self.file_access_ignore_patterns[key] = val
 
     def update(self, topic, event):
         """
@@ -49,7 +57,28 @@ class AppProfileAnalyst:
                     self.update_execv_access(app_name, event)
                 case "update_seldom_syscall":
                     self.update_seldom_syscall(app_name, event)                    
-                                
+
+    def need_record_full_file(self, file_loc):
+        key, val = self.file_access_ignore_patterns.longest_prefix(file_loc)
+        if key:
+            try:
+                if file_loc.endswith(".py"):
+                    return file_loc
+                else:
+                    file_loc = file_loc[:file_loc.rfind('/')]
+                
+                    depth = val
+                    idx = -1
+                    for i in range(0, depth):
+                        idx = file_loc.find("/", idx + 1)
+                        if idx == -1:
+                            return file_loc                    
+                    return file_loc[:idx]
+            except:
+                return file_loc 
+        else:
+            return file_loc
+
     def update_net_access(self, app_name, event):
         try:
             """
@@ -63,6 +92,9 @@ class AppProfileAnalyst:
     def update_file_access(self, app_name, event):
         try:
             if app_name:
+                if "file" in event:
+                    file_loc = self.need_record_full_file(event["file"])
+                    event["file"] = file_loc
                 self.monitored_apps[app_name].update_file_access(event)
         except BaseException as e:
             """
