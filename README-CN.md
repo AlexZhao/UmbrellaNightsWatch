@@ -5,8 +5,9 @@
 WARNING/CRITICAL: 错误的配置会将用户锁到系统之外    
 
 Umbrealla NightWatch 是一个Linux系统监控守护进程，根据加载eBPF的不同它会收集不同程度系统访问信息     
+粒度和范围可以根据配置文件来进行调整   
 
-Umbrealla NightWatch是纵深网络防御系统的主机防御系统设计， 它可以用来控制DMZ主机的安全性可以扩展到    
+Umbrealla NightWatch是纵深网络防御系统的主机防御系统设计， 它可以用来控制DMZ主机的安全性， 并可以扩展到    
 Linux内和中的多种不同安全层级加固。    
 
 # 纵深网络防御       
@@ -36,18 +37,22 @@ Linux内和中的多种不同安全层级加固。
 
 ## 网络报文检测         
   NightWatch使用eBPF来对XDP和TC进行报文检测，主要基于下面的考虑     
-  1. 不再需要混在模式抓包    
+  1. 不再需要混杂模式抓包    
   2. 配置只过滤需要的报文          
-  3. 轻负载        
+  3. 轻负载
 
-# eBPF的可插拔探针， MAC模块， Packet过滤器    
+## XDP防火墙              
+  NightWatch的pkt系统可以用来实现基于zone的XDP防火墙    
 
+# eBPF的可插拔探针， MAC模块， Packet过滤器/防火墙        
   NightWatch基于BCC实现动态可更改的eBPF框架，主要包括三个主要eBPF类别：    
      1. eBPF 探针             --- prb    
      2. eBPF LSM             --- lsm   
      3. eBPF Packet Filter   --- pkt   
-  可动态修改所有的eBPF组件，根据需要加载不同的eBPF模块，动态可配置， NightWatch本身的安全性由     
-  um_lsm.py内建的ebpf_shield提供，其保证NightWatch无法被中止，并控制eBPF模块的加载。   
+  可动态修改所有的eBPF组件，根据需要加载不同的eBPF模块，动态可配置。    
+  
+  NightWatch本身的安全性由um_lsm.py内建的ebpf_shield提供，其保证NightWatch无法被中止，并控制eBPF模块的加载。   
+  ebpf_shield使用BPF_LSM来控制对NightWatch用户态进程的修改   
 
 ## eBPF PRB    
      dev_prb      - ebpf_prb_dev.c    
@@ -80,16 +85,37 @@ Linux内和中的多种不同安全层级加固。
 {
     "audit_log_path" : "/var/log/nw.log",
     "audit_log_enabled" : true, 
-   
-    "pipes": [                                            // 控制管道，分别对应prb, lsm, pkt组建
-        "umbrella_prb_pipe",
-        "umbrella_lsm_pipe",
-        "umbreall_pkt_pipe"
-    ],
+
+    "topics": {                                         // 消息topics，提供给analyst分析使用的topic定义,消息为json格式
+        "file_open" : {
+            "app":"str",
+            "pid":"int",
+            "file":"str",
+            "timestamp":"str"
+        },
+        ...
+    }
 
     "umbrella_prb": {                                    // Umbreall PRB 探针配置
         "file_prb": {                                    // 文件访问探针 
             "ebpf": "./ebpf/ebpf_prb_file_access.c"      // eBPF 文件路径
+            "providers": {                               // file_prb作为消息provider
+                "sys_enter_open": {                      // eBPF 监控函数
+                    "topic": "file_open"                 // 次监控函数提供的 消息 topic,使用default映射
+                },
+                "sys_enter_openat": {
+                    "topic": "file_open",
+                    "map": {                             // 消息监控msg 翻译为 消息topic的对应方法， eBPF的文本消息格式为 [][][][][][]
+                        "2": "timestamp",                // [][][2] 内容映射到 file_open消息topic的timestamp属性
+                        "3": "app",                      // [][][][3] 
+                        "4": "pid",                      // [][][][][4]
+                        "5": "file"                      // [][][][][][5]
+                    }
+                },
+                "sys_enter_openat2": {
+                    "topic": "file_open"
+                }
+            }
         },
         "module_prb": {                                  // 模块加载探针
             "ebpf": "./ebpf/ebpf_prb_mod_op.c"           // eBPF 文件路径
@@ -135,18 +161,33 @@ Linux内和中的多种不同安全层级加固。
     },
 
     "analyst": {                                         // 实时分析器配置   
-        "nw_endpoint": "http://127.0.0.1:8277",          // nw的命令行端点
-        "prophet_endpint": "https://192.168.10.250:",    // prophet配置端点
-        "prophet_syslog": "192.168.10.250",              // syslog 接口   
-        "equipped_lsm": [
-            "net_lsm",
-            "exec_lsm"
-        ],
-        "monitored_events": [
-            "tcp_init"
-        ],
-        "process": {
-            "quarantin": {
+        "nw_endpoint": "http://127.0.0.1:8277",          // NW的控制命令接口
+        
+        "app_profile": {                                 // 内置的app_profile分析器
+            "consumers": { 
+                "net_connect": "update_net_access",      // 分析器订阅的消息topics， 和update此消息所使用的内部接口
+                "file_open": "update_file_access",
+                "dev_operate": "update_dev_access",
+                "execv": "update_execv_access",
+                "seldom_syscall": "update_seldom_syscall"
+            },
+            "file_access_ignore_patterns": {
+                "/home": 4,
+                "/var/tmp": 5,
+                "/var/log": 5,
+                "/var/cache": 5,
+                "/tmp": 3,
+                "/dev/shm": 4,
+                "/usr/share": 4,
+                "/usr/local/share": 5
+            }
+        },
+
+        "prophet_analysis": {
+            "prophet_endpint": "https://192.168.10.250:",
+            "prophet_syslog": "192.168.10.250",
+            "consumers": {
+                "net_connect": "analysis_net_access"
             }
         }
     },
