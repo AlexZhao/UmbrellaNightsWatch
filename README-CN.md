@@ -105,11 +105,11 @@ Linux内和中的多种不同安全层级加固。
                 },
                 "sys_enter_openat": {
                     "topic": "file_open",
-                    "map": {                             // 消息监控msg 翻译为 消息topic的对应方法， eBPF的文本消息格式为 [][][][][][]
-                        "2": "timestamp",                // [][][2] 内容映射到 file_open消息topic的timestamp属性
-                        "3": "app",                      // [][][][3] 
-                        "4": "pid",                      // [][][][][4]
-                        "5": "file"                      // [][][][][][5]
+                    "map": {                             // 消息监控msg 翻译为 消息topic的对应方法
+                        "2": "timestamp",                // 
+                        "3": "app",                      //  
+                        "4": "pid",                      // 
+                        "5": "file"                      // 
                     }
                 },
                 "sys_enter_openat2": {
@@ -190,7 +190,85 @@ Linux内和中的多种不同安全层级加固。
                 "net_connect": "analysis_net_access"
             }
         }
-    },
+    }
+}
+
+实时分析器使用的 provider -> topic -> consumer 语法
+
+例如：
+    "topics": {                                  
+        "file_open" : {
+            "app":"str",
+            "pid":"int",
+            "file":"str",
+            "timestamp":"str"
+        },
+        ...
+    }
+
+    "umbrella_prb": {                                    
+        "file_prb": {                                     
+            "ebpf": "./ebpf/ebpf_prb_file_access.c"      
+            "providers": {                               
+                "sys_enter_openat": {
+                    "topic": "file_open",
+                    "map": {                            
+                        "2": "timestamp",                
+                        "3": "app",                     
+                        "4": "pid",                   
+                        "5": "file"                
+                    }
+                }
+            }
+        }
+        ...
+    }
+
+    "app_profile": {                                 
+        "consumers": { 
+            "net_connect": "update_net_access",      
+            "file_open": "update_file_access",
+            ...
+        }
+    }
+
+provider将文本生成json消息
+
+    sys_enter_openat prb函数的文本格式消息为
+    [   0    ] [        1       ] [      2      ]  [     3    ] [  4  ] [           5             ] 
+    [file_prb]:[sys_enter_openat]:[?-?-? ?:?:?.?]  [python3.11] [32073] [include/linux/...........]
+    
+    根据 "map"的定义 此 消息会 生成json格式的 topic
+    {
+        "topic":"file_open",
+        "app": "python3.11",
+        "pid": 32073,
+        "file":"include/linux/........",
+        "timestamp":"?-?-? ?:?:?.?"
+    }
+
+    此语法还支持例如：
+    "3:": {
+        "key": "params",
+        "sep": " "
+    }
+    对上面的sys_enter_openat的文本会展开为
+    {
+        ...
+        "params": "python3.11 32073 include/linux/.....",  表示从第3个item使用空格连接展开为key params的对应消息
+        ...
+    }
+
+consumer将json消息使用内建的函数更新:
+    "app_profile": {                                 
+        "consumers": { 
+            "net_connect": "update_net_access",      
+            "file_open": "update_file_access",
+            ...
+        }
+    }
+    topic  "file_open"  对应 app_profile配置的分析器 内置method update_file_access来使用 file_open topic的数据    
+
 
 ```
 
