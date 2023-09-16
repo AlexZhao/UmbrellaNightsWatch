@@ -4,7 +4,7 @@ English | [简体中文](README-CN.md)
 
 WARNING/CRITICAL: Configuration of NW will easily lock you out of Linux system
 
-NightsWatch is a toy Linux System monitoring daemon process which will record everything of the system accessed      
+NightsWatch is a Linux System monitoring daemon process which will record everything of the system accessed      
 
 It is in the core of Defense in Depth of Umbrella design, it used to control the DMZ security overall      
 with modification NW can to all different types of security control on modern Linux system   
@@ -60,6 +60,18 @@ it reuquired centralized realtime analysis of the overall system behavior of all
   1. non promiscuous mode capture packet (direct device driver, NIC card level mode will receive many not dested packet to the host)   
   2. better configurable filter to only hook out interesting packets     
   3. it is not about performance, it is about to not impact on existing working mode but only hookout required stuffs for analysis    
+
+
+## Layered Firewall on Linux Host
+
+### XDP firewall   
+  1. XDP layer firewall control the opened ports    
+
+### TC firewall control the packet egress
+  1. TC classifier firewall control the packet egress 
+
+### Syscall layer firewall    
+  1. Control socket layer only can be accessed from configured application with configured target protocol and IP addresses   
 
 ### Firefox    
    1. DNS Resolver threads detect many IP not works as DNS server    

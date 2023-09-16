@@ -414,13 +414,13 @@ def log_of_lsm_daemon(ebpf_name, attached_ebpf, log_pipe, log_convert_fn=None):
         log = "{} -> event {}".format(ebpf_name, log_str)
         log_pipe.send(log)
 
-    try:
-        attached_ebpf["lsm_events"].open_ring_buffer(log_str_gen)    
+    attached_ebpf["lsm_events"].open_ring_buffer(log_str_gen)    
 
-        while True:
+    while True:
+        try:
             attached_ebpf.ring_buffer_poll()
-    except KeyboardInterrupt:
-        sys.exit()
+        except BaseException as e:
+            print(ebpf_name, "LSM log polling failed with exception ", e)
 
 #
 # command based on JSON request
@@ -431,7 +431,7 @@ def log_of_lsm_daemon(ebpf_name, attached_ebpf, log_pipe, log_convert_fn=None):
 # }
 #
 #
-def lsm_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=None):
+def lsm_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, debug=False, log_convert_fn=None):
     """
     LSM Daemon Process
     """
@@ -480,8 +480,19 @@ def lsm_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
             if attached_bpf[config_map] is None:
                 print("Not aligned config map {} in config file, but not in eBPF".format(config_map))
 
-    lsm_log_th = threading.Thread(name="lsm_log.{}".format(ebpf_name), target=log_of_lsm_daemon, args=(ebpf_name, attached_bpf, child_log_pipe, log_convert_fn, ))
-    lsm_log_th.start()
+    try:
+        lsm_log_th = threading.Thread(name="lsm_log.{}".format(ebpf_name), target=log_of_lsm_daemon, args=(ebpf_name, attached_bpf, child_log_pipe, log_convert_fn, ), daemon=True)
+        lsm_log_th.start()
+    except BaseException as e:
+        print("Error when create lsm log thread, ", e)
+        error_msg = "{}".format(e)
+        con_pipe.send('''
+        {
+            "initialization": "failed",
+            "error_msg": "%s"
+        }
+        ''' % (error_msg))
+        return 
 
     data_dispatcher = Dispatcher()
 
@@ -530,79 +541,74 @@ def lsm_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
     }
     ''')
 
-    try:
-        while True:
+    while True:
+        try:
             cmd = con_pipe.recv()
             cmd_json = json.loads(cmd)
 
-            try:
-                match cmd_json["cmd"]:
-                    case "list_all_items":
-                        result = dict({"tables": [], "lsms": []})
-                        for tn in attached_bpf:
-                            result["tables"].append(tn)
-                        for fn in attached_bpf.lsm_fds.keys():
-                            result["lsms"].append(fn.decode('utf-8'))
-                        con_pipe.send(json.dumps(result))
-                    case "update_config":
-                        print(cmd_json)
-                        if "map" in cmd_json:
-                            config_map = cmd_json["map"]
-                            key = cmd_json["key"]
-                            value = cmd_json["value"]
-                            if cmd_json["key_convert"] != "None":
-                                key = data_dispatcher.convert(cmd_json["key_convert"], cmd_json["key"])
-                            if cmd_json["val_convert"] != "None" and cmd_json["val_convert"] != "str2mapfd":
-                                value = data_dispatcher.convert(cmd_json["val_convert"], cmd_json["value"])
+            match cmd_json["cmd"]:
+                case "list_all_items":
+                    result = dict({"tables": [], "lsms": []})
+                    for tn in attached_bpf:
+                        result["tables"].append(tn)
+                    for fn in attached_bpf.lsm_fds.keys():
+                        result["lsms"].append(fn.decode('utf-8'))
+                    con_pipe.send(json.dumps(result))
+                case "update_config":
+                    if "map" in cmd_json:
+                        config_map = cmd_json["map"]
+                        key = cmd_json["key"]
+                        value = cmd_json["value"]
+                        if cmd_json["key_convert"] != "None":
+                            key = data_dispatcher.convert(cmd_json["key_convert"], cmd_json["key"])
+                        if cmd_json["val_convert"] != "None" and cmd_json["val_convert"] != "str2mapfd":
+                            value = data_dispatcher.convert(cmd_json["val_convert"], cmd_json["value"])
 
-                            if cmd_json["val_convert"] == "str2mapfd":
-                                value = bytes(value, 'ascii')
-                                fdmap = attached_bpf.get_table(value)
-                                value = ct.c_int(fdmap.get_fd())
+                        if cmd_json["val_convert"] == "str2mapfd":
+                            value = bytes(value, 'ascii')
+                            fdmap = attached_bpf.get_table(value)
+                            value = ct.c_int(fdmap.get_fd())
 
-                            print("Try to config {} {} {}".format(config_map, key, value))
+                        attached_bpf[config_map][key] = value
 
-                            attached_bpf[config_map][key] = value
-
-                            con_pipe.send('''
-                            {
-                                "cmd_execute_result": "success",
-                            }
-                            ''')
-                        else:
-                            con_pipe.send('''
-                            {
-                                "cmd_execute_result": "failed",
-                                "error": "target map not existed"
-                            }
-                            ''')
-                    case "delete_config":
-                        print(cmd_json)
                         con_pipe.send('''
                         {
                             "cmd_execute_result": "success",
                         }
                         ''')
-                    case "exit":
-                        print(ebpf_name, "Received command exit, it should be initiated by reload")
+                    else:
                         con_pipe.send('''
                         {
-                            "cmd_execute_result": "sucess"
+                            "cmd_execute_result": "failed",
+                            "error": "target map not existed"
                         }
                         ''')
-                        return
-                    case _:
-                        con_pipe.send("{'cmd_execute_result': 'unknown command'}")
-            except:
-                con_pipe.send('''
-                {
-                    "cmd_execute_result": "failed",
-                    "error": "update command not correct format %s"
-                }
-                ''' % (cmd_json))
-                print("Not able to process {}".format(cmd_json))
-    except KeyboardInterrupt:
-        sys.exit()
+                case "delete_config":
+                    con_pipe.send('''
+                    {
+                        "cmd_execute_result": "success",
+                    }
+                    ''')
+                case "exit":
+                    con_pipe.send('''
+                    {
+                        "cmd_execute_result": "sucess"
+                    }
+                    ''')
+                    return
+                case _:
+                    con_pipe.send("{'cmd_execute_result': 'unknown command'}")
+        except KeyboardInterrupt as k:
+            """
+            """
+        except BaseException as e:
+            con_pipe.send('''
+            {
+                "cmd_execute_result": "failed",
+                "error": "update command not correct format %s"
+            }
+            ''' % (cmd_json))
+            print("Not able to process {}".format(cmd_json))
     
 class eBPFLSMDaemon:
     def __init__(self, ebpf_name, ebpf_config):
@@ -617,19 +623,30 @@ class eBPFLSMDaemon:
         self.active = False
         self.ebpf_name = ebpf_name
 
-    def __exit__(self):
+    def __del__(self):
         print("Exit [{}], cleanup environment".format(self.ebpf_name))
-        self.daemon_proc.kill()
-        self.daemon_proc.close()
+        if self.active:
+            self.daemon_proc.terminate()
+            self.daemon_proc.join()
 
     def start(self):
-        self.daemon_proc.start()
-        initialization_status = self.con_pipe.recv()
-        status = json.loads(initialization_status)
-        if status["initialization"] != "finished":
-            self.active = False
-        else:
-            self.active = True
+        try:
+            if not self.active: 
+                self.daemon_proc.start()
+                initialization_status = self.con_pipe.recv()
+                status = json.loads(initialization_status)
+                if status["initialization"] == "finished":
+                    self.active = True
+                    return self.active
+            else:
+                print(self.ebpf_name, " Already started")
+                return self.active
+        except BaseException as e:
+            print("Not able to start LSM daemon process ", self.ebpf_name, " exception: ", e)
+
+        self.daemon_proc.terminate()
+        self.daemon_proc.join()
+        self.active = False
 
         return self.active
 
@@ -733,7 +750,7 @@ class eBPFLSMLog:
             except BaseException as e:
                 print("Wrong configuration of log flush threshold")
     
-    def __exit__(self):
+    def __del__(self):
         self.log_file.close()
 
     def log(self, log_str):
@@ -777,6 +794,8 @@ class UmbrellaLSM:
         self.log_monitor_pipes.append(log_pipe)
         for ebpf_name, ebpf_daemon in self.ebpf_daemons.items():
             self.log_monitor_pipes.append(ebpf_daemon.get_log_pipe())
+
+        self.log_monitor_active = False
 
     def set_events_monitor(self, events_monitor):
         self.events_monitor = events_monitor
@@ -862,28 +881,25 @@ class UmbrellaLSM:
             return {'reload_lsm': "failed", "not_existed": reload_lsm}
 
     def log_analysis_loop(self):
-        try:
-            while self.log_monitor_pipes:
-                for pipe in wait(self.log_monitor_pipes):
-                    try:
-                        event_item = pipe.recv()
-                        log_str = str(event_item)
-                        lsm = log_str[:log_str.find("->")].strip()
+        while self.log_monitor_pipes:
+            for pipe in wait(self.log_monitor_pipes):
+                try:
+                    event_item = pipe.recv()
+                    log_str = str(event_item)
+                    lsm = log_str[:log_str.find("->")].strip()
 
-                        if lsm in self.providers:
-                            self.events_monitor.consume_lsm_event(self.providers[lsm].convert(log_str[log_str.find("["):]))
-                        
-                        if lsm not in self.ebpf_lsm_logs:
-                            print(log_str)
-                        else:
-                            """
-                            lsm specific log processing
-                            """
-                            self.ebpf_lsm_logs[lsm].log(log_str)
-                    except BaseException as e:
-                        self.log_monitor_pipes.remove(pipe)
-        except KeyboardInterrupt:
-            sys.exit()
+                    if lsm in self.providers:
+                        self.events_monitor.consume_lsm_event(self.providers[lsm].convert(log_str[log_str.find("["):]))
+                      
+                    if lsm not in self.ebpf_lsm_logs:
+                        print(log_str)
+                    else:
+                        """
+                        lsm specific log processing
+                        """
+                        self.ebpf_lsm_logs[lsm].log(log_str)
+                except BaseException as e:
+                    self.log_monitor_pipes.remove(pipe)
 
     def start_all(self):
         """
@@ -893,8 +909,16 @@ class UmbrellaLSM:
         for ebpf_name, ebpf_lsm in self.ebpf_daemons.items():
             ebpf_lsm.start()
 
-        self.um_lsm_log_th = threading.Thread(name="um_lsm_log", target=self.log_analysis_loop)
+        self.log_monitor_active = True
+        self.um_lsm_log_th = threading.Thread(name="um_lsm_log", target=self.log_analysis_loop, daemon=True)
         self.um_lsm_log_th.start()
+
+
+    def clean_all(self):
+        print("Clean all loaded LSM, overall {} loaded".format(len(self.ebpf_daemons)))        
+        self.ebpf_daemons.clear()
+        self.log_monitor_active = False
+        self.reload_log_pipe()
 
     def start(self, ebpf_name):
         """

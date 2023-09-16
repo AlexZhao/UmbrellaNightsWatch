@@ -46,7 +46,7 @@ BPF_HASH_OF_MAPS(app_block_ioctl_list, struct task_info, "block_ioctl_list", MAX
 
 
 struct file_info {
-    char name[64];
+    char name[32];
 };
 
 
@@ -110,7 +110,6 @@ LSM_PROBE(file_permission, struct file *file, int mask) {
 
     return 0;
 }
-
 
 /// @brief  Security Control Device IOCTL, direct cause GUI crash, many basic gui related 
 ///          service access ioctl
@@ -207,15 +206,13 @@ LSM_PROBE(file_fcntl, struct file *file, unsigned int cmd,
     return 0;
 }
 
-
 /// @brief check mapped file protection attribute extra
 ///        A kernel level ld-linux mapping check
 /// @param  
 /// @param file 
 /// @param prot 
 /// @param flags 
-LSM_PROBE(mmap_file, struct file *file, unsigned long prot,
-			unsigned long flags) {    
+LSM_PROBE(mmap_file, struct file *file, unsigned long prot, unsigned long flags) {    
     // anon mem with not W+X, direct allow
     if (file == NULL && !((prot & PROT_WRITE) && (prot & PROT_EXEC))) {
         return 0;
@@ -232,12 +229,11 @@ LSM_PROBE(mmap_file, struct file *file, unsigned long prot,
         return -EACCES;
     }
 
-
     struct file_info file_name;
     ebpf_memset(file_name.name, 0, sizeof(file_name.name));
     if (file != NULL) {
         if (ebpf_get_file_name(file, file_name.name, sizeof(file_name.name)) != 0) {
-            return -EACCES;
+            ebpf_strncpy(file_name.name, "Failed", 7);
         }
     } else {
         ebpf_strncpy(file_name.name, "NULL", 5);
@@ -267,14 +263,8 @@ LSM_PROBE(mmap_file, struct file *file, unsigned long prot,
         lsm_events.ringbuf_submit(event, 0);
     }
 
-    // by default reject map W+X
-    if ((prot & PROT_EXEC) && (prot & PROT_WRITE)) {
-        return -EPERM;
-    }
-
     return 0;
 }
-
 
 #define READ_INCREMENT 1
 #define WRITE_INCREMENT 2
@@ -390,14 +380,12 @@ LSM_PROBE(file_mprotect, struct vm_area_struct *vma, unsigned long reqprot,
             ebpf_memset(file_name.name, 0, sizeof(file_name.name));
             if (ebpf_get_file_name(f, file_name.name, sizeof(file_name.name)) != 0) {
                 lsm_events.ringbuf_discard(event, 0);
-                return -EACCES;
+                return 0;
             }
             put_ebpf_event_log(event, file_name.name, ebpf_strnlen(file_name.name, sizeof(file_name.name)), TYPE_STR);
         }
 
         lsm_events.ringbuf_submit(event, 0);
-    } else {
-        return -EACCES;
     }
 
     return 0;
@@ -432,7 +420,3 @@ LSM_PROBE(file_receive, struct file *file) {
 LSM_PROBE(file_truncate, struct file *file) {
     return 0;
 }
-
-
-
-

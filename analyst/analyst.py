@@ -13,6 +13,7 @@ from pygtrie import StringTrie
 from threading import Lock
 
 from analyst.application import ApplicationProfile
+from analyst.prophet import Prophet
 
 class AppProfileAnalyst:
     def __init__(self, config):

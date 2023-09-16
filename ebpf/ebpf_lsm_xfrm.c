@@ -165,14 +165,14 @@ LSM_PROBE(xfrm_state_pol_flow_match, struct xfrm_state *x,
 
 
 
-/// @brief  Trigger system restart which shall not
+/// @brief reserve lookup may call this check xfrm_decode_session_reverse
+///        the traffic is not correct, caused by __send_icmp when receive traffic
+///        TODO, this is not normal traffic 
 /// @param  
 /// @param skb 
 /// @param secid 
 /// @param ckall 
-LSM_PROBE(xfrm_decode_session, struct sk_buff *skb, u32 *secid,
-	 int ckall) {
-
+LSM_PROBE(xfrm_decode_session, struct sk_buff *skb, u32 *secid, int ckall) {
     struct ebpf_event *event = lsm_events.ringbuf_reserve(sizeof(struct ebpf_event));
     if (event == NULL) {
         return -EACCES;
@@ -214,9 +214,11 @@ LSM_PROBE(xfrm_decode_session, struct sk_buff *skb, u32 *secid,
     bpf_get_current_comm(app_name, sizeof(app_name));
     put_ebpf_event_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR);
 
-	struct sec_path *sp = skb_sec_path(skb);
+    struct sec_path *sp = skb_sec_path(skb);
     if (sp) {
-        // tunnel check
+        // tunnel check        
+        lsm_events.ringbuf_submit(event, 0);
+        return -EPERM;
     }
 
     lsm_events.ringbuf_submit(event, 0);

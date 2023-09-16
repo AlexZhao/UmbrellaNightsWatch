@@ -92,7 +92,10 @@ class eBPFPKTLog:
             time.sleep(60)
             truncate_pass_time += 60
 
-    def __exit__(self):
+    def __del__(self):
+        if self.active_pkt_log_daemon:
+            self.active_pkt_log_daemon = False
+            self.pkt_log_daemon_th.join()
         self.log_file.close()
 
     def log(self, log_str):
@@ -133,8 +136,10 @@ def pkt_perf_output_thread(ebpf_name, attached_ebpf, output_map, log_pipe, log_c
     while True:
         try:
             attached_ebpf.perf_buffer_poll()
-        except KeyboardInterrupt:
-            sys.exit()
+        except BaseException as e:
+            """
+            
+            """
 
 #
 # command based on JSON request
@@ -156,7 +161,7 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
         return
 
     try:
-        pkt_filter_bpf = BPF(src_file=ebpf_config["ebpf"])
+        pkt_filter_bpf = BPF(src_file=ebpf_config["ebpf"], cflags=["-fcf-protection"])
     except BaseException as e:
         error_msg = "{}".format(e)
         print("failed to load ebpf {} with config {}, error {}".format(ebpf_name, ebpf_config, error_msg))
@@ -202,6 +207,8 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                                 error_msg = "Unkonw pkt_type in config it need to be xdp/..."
                     except BaseException as e:
                         print("Attach packet filter to interface failed with exception ", e)
+                        error_msg = "Attach pkt_parser failed {}".format(e)
+
         if error_msg is not None:
             print("wrong configured pkt filter ebpf {} with config {}, erro {}".format(ebpf_name, ebpf_config, error_msg))
             con_pipe.send('''
@@ -238,7 +245,7 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                 match output_type:
                     case "perf_output":
                         try:
-                            perf_th = threading.Thread(name="pkt.{}".format(output_map), target=pkt_perf_output_thread, args=(ebpf_name, pkt_filter_bpf, output_map, child_log_pipe, log_convert_fn, ))
+                            perf_th = threading.Thread(name="pkt.{}".format(output_map), target=pkt_perf_output_thread, args=(ebpf_name, pkt_filter_bpf, output_map, child_log_pipe, log_convert_fn, ), daemon=True)
                             perf_th.start()
                             pkt_outputs_threads["perf"][output_map] = perf_th
                         except BaseException as e:
@@ -248,36 +255,34 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
     else:
         print("This is a pkt filter without filter out data")
 
-    try:
-        while True:
+    while True:
+        try:
             cmd = con_pipe.recv()
             cmd_json = json.loads(cmd)
-            try:
-                match cmd_json["cmd"]:
-                    case "list_all_items":
-                        result = dict({"cmd_execute_result": "success"})                    
-                        con_pipe.send(json.dumps(result))                        
-                    case "exit":
-                        print(ebpf_name, "Received command exit, it should be initiated by reload")
-                        con_pipe.send('''
-                        {
-                            "cmd_execute_result": "sucess"
-                        }
-                        ''')
-                        return                        
-                    case _:
-                        con_pipe.send("{'cmd_execute_result': 'unknown command'}")
-            except BaseException as e:
-                con_pipe.send('''
-                {
-                    "cmd_execute_result": "failed",
-                    "error": "update command not correct format %s"
-                }
-                ''' % (cmd_json))
-    except KeyboardInterrupt:
-        sys.exit()
-        
-
+            match cmd_json["cmd"]:
+                case "list_all_items":
+                    result = dict({"cmd_execute_result": "success"})                    
+                    con_pipe.send(json.dumps(result))                        
+                case "exit":
+                    con_pipe.send('''
+                    {
+                        "cmd_execute_result": "sucess"
+                    }
+                    ''')
+                    return                        
+                case _:
+                    con_pipe.send("{'cmd_execute_result': 'unknown command'}")
+        except KeyboardInterrupt as k:
+            """
+            Ignore Keyboard interrupt
+            """
+        except BaseException as e:
+            con_pipe.send('''
+            {
+                "cmd_execute_result": "failed",
+                "error": "command not correct format %s"
+            }
+            ''' % (cmd_json))
 
 class eBPFPKTDaemon:
     def __init__(self, ebpf_name, ebpf_config):
@@ -288,14 +293,34 @@ class eBPFPKTDaemon:
         parent_pipe, child_pipe = Pipe()
         self.con_pipe = parent_pipe
         self.log_pipe = log_pipe
+        self.ebpf_name = ebpf_name
 
         self.daemon_proc = Process(target=pkt_daemon, name=ebpf_name, args=(child_pipe, child_log_pipe, ebpf_name, ebpf_config, ))
+        self.active = False
+
+    def __del__(self):
+        print("Exit [{}], cleanup environment".format(self.ebpf_name))
+        if self.active:
+            self.daemon_proc.terminate()
+            self.daemon_proc.join()
 
     def start(self):
         """
         Start eBPF packet filter
         """
-        self.daemon_proc.start()
+        try:
+            self.daemon_proc.start()
+            res = json.loads(self.con_pipe.recv())
+            if res["initialization"] == "finished":
+                self.active = True
+                return self.active
+        except BaseException as e:
+            print("Not able to start pkt daemon process ", self.ebpf_name, " exception: ", e)
+        
+        self.active = False
+        self.daemon_proc.terminate()
+        self.daemon_proc.join()
+        return self.active
 
     def get_log_pipe(self):
         return self.log_pipe
@@ -328,16 +353,23 @@ class eBPFPKTDaemon:
         except BaseException as e:
             return None, {'reload_pkt': 'failed', "pkt": ebpf_name}
 
-        cmd = """
-        {
-            "cmd": "exit"
-        }
-        """
-        self.con_pipe.send(cmd)
-        self.daemon_proc.terminate()
-        self.daemon_proc.join()
-        self.con_pipe.close()
-        self.log_pipe.close()
+        try:
+            cmd = """
+            {
+                "cmd": "exit"
+            }
+            """
+            self.con_pipe.send(cmd)
+            res = json.loads(self.con_pipe.recv())
+            if res["cmd_execute_result"] != "success":
+                return None, {'reload_pkt' : 'failed', 'pkt': ebpf_name}
+            
+            self.daemon_proc.terminate()
+            self.daemon_proc.join()
+            self.con_pipe.close()
+            self.log_pipe.close()
+        except BaseException as e:
+            return None, {'reload_pkt': 'failed', 'pkt': ebpf_name, 'details': "Exception {}".format(e)}
 
         self.con_pipe = parent_pipe
         self.log_pipe = log_pipe
@@ -346,16 +378,23 @@ class eBPFPKTDaemon:
         return log_pipe, {'reload_pkt' : 'success', 'pkt': ebpf_name}
 
     def stop(self):
-        cmd = """
-        {
-            "cmd": "exit"
-        }
-        """
-        self.con_pipe.send(cmd)
-        self.daemon_proc.terminate()
-        self.daemon_proc.join()
-        self.con_pipe.close()
-        self.log_pipe.close()
+        try:
+            cmd = """
+            {
+                "cmd": "exit"
+            }
+            """
+            self.con_pipe.send(cmd)
+            res = json.loads(self.con_pipe.recv())
+            if res["cmd_execute_result"] != "success":
+                return None
+
+            self.daemon_proc.terminate()
+            self.daemon_proc.join()
+            self.con_pipe.close()
+            self.log_pipe.close()
+        except BaseException as e:
+            return None 
 
         return self.log_pipe
 
@@ -390,6 +429,8 @@ class UmbrellaPKT:
         for ebpf_name, ebpf_daemon in self.ebpf_daemons.items():
             self.pkt_monitor_pipes.append(ebpf_daemon.get_log_pipe())
 
+        self.pkt_monitor_active = False
+
     def set_events_monitor(self, events_monitor):
         self.events_monitor = events_monitor
 
@@ -400,44 +441,48 @@ class UmbrellaPKT:
             else:
                 self.providers[ebpf_name] = DataProvider(ebpf_name, ebpf_config["providers"])
 
+    def pkt_mon_loop(self):
+        while self.pkt_monitor_active:
+            for pipe in wait(self.pkt_monitor_pipes):
+                try:
+                    event_item = pipe.recv()                        
+                    pkt_str = str(event_item)
+                    pkt = pkt_str[:pkt_str.find("->")].strip()
+                        
+                    if pkt in self.providers:
+                        self.events_monitor.consume_pkt_event(self.providers[pkt].convert(pkt_str[pkt_str.find("->")+3:]))                    
+
+                    if pkt not in self.ebpf_pkt_logs:
+                        print(pkt_str)
+                    else:
+                        self.ebpf_pkt_logs[pkt].log(pkt_str[pkt_str.find("->")+3:])
+                except BaseException as e:
+                    self.pkt_monitor_pipes.remove(pipe)
+
+
+    def clean_all(self):
+        print("Clean all loaded PKT, overall {} loaded".format(len(self.ebpf_daemons)))
+        self.ebpf_daemons.clear()
+        self.pkt_monitor_active = False
+        self.reload_log_pipe()
+
     def start_all(self):
         """
         Start all eBPF PKT, parallel loading
         Seems like fake concurrent coroutines
         """
+        failed_pkts = [] 
         for ebpf_name, ebpf_pkt in self.ebpf_daemons.items():
-            ebpf_pkt.start()
-            print("{}  starting".format(ebpf_name))
+            if ebpf_pkt.start():
+                print("{}  started".format(ebpf_name))
+            else:
+                failed_pkts.append(ebpf_name)
+        
+        for ebpf_name in failed_pkts:
+            self.ebpf_daemons.pop(ebpf_name)
 
-    def pkt_mon_loop(self):
-        try:
-            while self.pkt_monitor_pipes:
-                for pipe in wait(self.pkt_monitor_pipes):
-                    try:
-                        event_item = pipe.recv()                        
-                        pkt_str = str(event_item)
-                        pkt = pkt_str[:pkt_str.find("->")].strip()
-                        
-                        if pkt in self.providers:
-                            self.events_monitor.consume_pkt_event(self.providers[pkt].convert(pkt_str[pkt_str.find("->")+3:]))                    
-
-                        if pkt not in self.ebpf_pkt_logs:
-                            print(pkt_str)
-                        else:
-                            self.ebpf_pkt_logs[pkt].log(pkt_str[pkt_str.find("->")+3:])
-                    except BaseException as e:
-                        self.pkt_monitor_pipes.remove(pipe)
-
-        except KeyboardInterrupt:
-            sys.exit()
-
-    def start_all(self):
-        """
-        """
-        for ebpf_name, ebpf_lsm in self.ebpf_daemons.items():
-            ebpf_lsm.start()
-
-        self.pkt_mon_th = threading.Thread(name="pkt_mon", target=self.pkt_mon_loop)
+        self.pkt_monitor_active = True
+        self.pkt_mon_th = threading.Thread(name="pkt_mon", target=self.pkt_mon_loop, daemon=True)
         self.pkt_mon_th.start()
 
     def list_all(self):
@@ -501,6 +546,9 @@ class UmbrellaPKT:
             return { 'del_pkt': 'failed', 'pkt': del_pkt}
         else:
             log_pipe = self.ebpf_daemons[del_pkt].stop()
+            if log_pipe == None:
+                return {'del_pkt': 'failed', 'pkt': del_pkt}
+            
             self.ebpf_daemons.pop(del_pkt)
             self.providers.pop(del_pkt)
             return { 'del_pkt': 'success', 'pkt': del_pkt}

@@ -176,6 +176,16 @@ class EventsMonitor:
     def close_log(self):
         self.audit_file.close()
 
+    def clean_all(self):
+        if self.lsm:
+            self.lsm.clean_all()
+
+        if self.prb:
+            self.prb.clean_all()
+
+        if self.pkt:
+            self.pkt.clean_all()
+
 
 events_monitor = EventsMonitor()
 
@@ -557,12 +567,10 @@ api = Api(app)
 
 # Msg topics related update
 
-
 # Analyst related URI endpoint for commandline interface
 api.add_resource(DumpMonDetails, '/dump_mon')
 api.add_resource(ListMonProc, '/list_mon')
 api.add_resource(ListDevAccess, '/list_dev_access')
-
 
 # Dynamic modifiable LSM 
 api.add_resource(LSM, '/lsm')
@@ -651,6 +659,9 @@ if __name__ == '__main__':
     # Port Short for RuntimeMonitor RM in ASCII
     app.run(debug=False, port=8277)
 
-    while True:
-        time.sleep(100)
-
+    try:
+        while True:
+            time.sleep(100)
+    except KeyboardInterrupt:
+        events_monitor.clean_all()
+        sys.exit()
