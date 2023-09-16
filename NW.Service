@@ -5,7 +5,7 @@ StartLimitIntervalSec=300
 StartLimitBurst=10
 
 [Service]
-ExecStart=/usr/bin/python /usr/bin/umbrella/nw.py /etc/umbrella/nw/runtime_mon.conf
+ExecStart=/usr/bin/python /usr/bin/umbrella/nw.py /etc/umbrella/nw/nw.conf
 Restart=always
 RestartSec=30
 

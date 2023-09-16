@@ -588,7 +588,7 @@ if __name__ == '__main__':
     sched_params = os.sched_param(os.sched_get_priority_max(os.SCHED_RR))
     os.sched_setscheduler(0, os.SCHED_RR, sched_params)
 
-    config_file_path = "./conf/runtime_mon.conf"
+    config_file_path = "./conf/nw.conf"
     if len(sys.argv) == 2 and sys.argv[1]:
         config_file_path = sys.argv[1]
     

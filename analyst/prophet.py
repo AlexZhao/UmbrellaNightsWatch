@@ -4,8 +4,7 @@
 #
 
 class Prophet:
-    def __init(self)__:
+    def __init__(self):
         """
         Prophet connectivity to interference  
         """
-        
