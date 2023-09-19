@@ -26,6 +26,8 @@ from multiprocessing import Process, Pipe
 from multiprocessing.connection import wait
 
 from pkt.pkt2json import PKT2JSON
+from firewall.firewall import ZoneFirewall
+from firewall.firewall import zone_port_rule
 
 from analyst.provider import DataProvider
 
@@ -150,10 +152,46 @@ def pkt_perf_output_thread(ebpf_name, attached_ebpf, output_map, log_pipe, log_c
 # }
 #
 #
-def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=None):
+def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, firewall_config=None, log_convert_fn=None):
     """
     LSM Daemon Process
     """
+    def zone_firewall_update(firewall_bpf, fn, intf, firewall_filter, zone, firewall_config):
+        firewall_bpf.attach_xdp(intf, fn, BPF.XDP_FLAGS_SKB_MODE)
+        ipr = pyroute2.IPRoute()
+        intf_id = ipr.link_lookup(ifname=intf)[0]
+        if zone in firewall_config["zones"]:
+            """
+            Zone based firewall configuration 
+            """
+            try:
+                array_ending = "_{}_ports".format(firewall_filter)
+                if "tcp" in firewall_config["zones"][zone][firewall_filter]:
+                    config_map = "tcp{}".format(array_ending)
+                    firewall_bpf[config_map][intf_id] = ZoneFirewall.generate_port_rule(firewall_config["zones"][zone][firewall_filter]["tcp"])
+                if "udp" in firewall_config["zones"][zone][firewall_filter]:
+                    config_map = "udp{}".format(array_ending)
+                    firewall_bpf[config_map][intf_id] = ZoneFirewall.generate_port_rule(firewall_config["zones"][zone][firewall_filter]["udp"])
+                if "sctp" in firewall_config["zones"][zone][firewall_filter]:
+                    config_map = "sctp{}".format(array_ending)
+                    firewall_bpf[config_map][intf_id] = ZoneFirewall.generate_port_rule(firewall_config["zones"][zone][firewall_filter]["sctp"])
+
+            except BaseException as e:
+                print("Zone firewall configuration failed ", e)
+        else:
+            print("Try attach firewall to not existed zone ", zone)
+            raise "attach to not existed zone {}".format(zone)
+
+    def is_firewall_parser(parser_name):
+        if parser_name.endswith("_ingress"):
+            return "ingress"
+        elif parser_name.endswith("_egress"):
+            return "egress"
+        elif parser_name.endswith("_forwarding"):
+            return "forwarding"
+        else:
+            return None
+
     if "ebpf" in ebpf_config:
         print("Equipped Packet Filter {}:{}  {}".format(ebpf_name, os.getpid(), ebpf_config["ebpf"]))
     else:
@@ -188,6 +226,21 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                                         for interface in pkt_config["interfaces"]:
                                             pkt_filter_bpf.attach_xdp(interface, fn, BPF.XDP_FLAGS_SKB_MODE)
                                             print("Attached {} on {}".format(pkt_config["pkt_parser"], interface))
+                                    elif "configs" in pkt_config:
+                                        # XDP ingress firewall configuration based on "configs"
+                                        # Zone controlling based firewall 
+                                        firewall_filter = is_firewall_parser(pkt_config["pkt_parser"])
+                                        if firewall_filter is not None:
+                                            for intf_name, config in pkt_config["configs"].items():
+                                                try:
+                                                    if "attached_zones" in config:
+                                                        for zone in config["attached_zones"]:
+                                                            zone_firewall_update(pkt_filter_bpf, fn, intf_name, firewall_filter, zone, firewall_config)
+                                                except BaseException as e:
+                                                    error_msg = "attach firewall on interface {} failed with exception {}".format(intf_name, e)
+                                                    break
+                                        else:
+                                            error_msg = "Configuration for firewall but without firewall required ingress/egress/forwarding eBPF"
                                     else:
                                         error_msg = "No configured interfaces  for xdp to attach"
                                 else:
@@ -204,13 +257,13 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                                             # Filter require to have cls_bpf and sch_sfq kernel mod
                                             ipr.tc("replace-filter", "bpf", intf, ":1", parent="1:", fd=fn.fd, name=fn.name, classid=1)
                             case _:
-                                error_msg = "Unkonw pkt_type in config it need to be xdp/..."
+                                error_msg = "Unkonw pkt_type in config it need to be xdp/classifier/..."
                     except BaseException as e:
                         print("Attach packet filter to interface failed with exception ", e)
                         error_msg = "Attach pkt_parser failed {}".format(e)
 
         if error_msg is not None:
-            print("wrong configured pkt filter ebpf {} with config {}, erro {}".format(ebpf_name, ebpf_config, error_msg))
+            print("wrong configured pkt filter ebpf {} with config {}, error {}".format(ebpf_name, ebpf_config, error_msg))
             con_pipe.send('''
             {
                 "initialization" : "failed",
@@ -269,7 +322,12 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
                         "cmd_execute_result": "sucess"
                     }
                     ''')
-                    return                        
+                    return
+                case "update_firewall":
+                    """
+                    Zone Based Firewall configuration updates
+                    """                        
+
                 case _:
                     con_pipe.send("{'cmd_execute_result': 'unknown command'}")
         except KeyboardInterrupt as k:
@@ -285,7 +343,7 @@ def pkt_daemon(con_pipe, child_log_pipe, ebpf_name, ebpf_config, log_convert_fn=
             ''' % (cmd_json))
 
 class eBPFPKTDaemon:
-    def __init__(self, ebpf_name, ebpf_config):
+    def __init__(self, ebpf_name, ebpf_config, ebpf_firewall_config = None):
         """
         eBPF Packet Daemon Process
         """
@@ -294,8 +352,9 @@ class eBPFPKTDaemon:
         self.con_pipe = parent_pipe
         self.log_pipe = log_pipe
         self.ebpf_name = ebpf_name
+        self.firewall_config = ebpf_firewall_config
 
-        self.daemon_proc = Process(target=pkt_daemon, name=ebpf_name, args=(child_pipe, child_log_pipe, ebpf_name, ebpf_config, ))
+        self.daemon_proc = Process(target=pkt_daemon, name=ebpf_name, args=(child_pipe, child_log_pipe, ebpf_name, ebpf_config, ebpf_firewall_config))
         self.active = False
 
     def __del__(self):
@@ -398,8 +457,15 @@ class eBPFPKTDaemon:
 
         return self.log_pipe
 
+    def update_firewall(self):
+        """
+        Firewall update functionalities 
+        Zone associate with interface  
+        """
+
+
 class UmbrellaPKT:
-    def __init__(self, ebpf_files, operations=None, events_monitor=None, msg_topics=None):
+    def __init__(self, ebpf_files, firewall_config, operations=None, events_monitor=None, msg_topics=None):
         """
         Initiate of UmbrellaPKT userspace 
         """
@@ -410,13 +476,18 @@ class UmbrellaPKT:
         self.operations = operations    
         self.events_monitor = events_monitor
         self.topics = msg_topics
+        self.firewall_config = firewall_config
 
         pkt_monitor_reload_trigger, pkt_pipe = Pipe()
         self.pkt_monitor_trigger_pipe = pkt_monitor_reload_trigger
 
         for ebpf_name, ebpf_config in ebpf_files.items():
             try:
-                self.ebpf_daemons[ebpf_name] = eBPFPKTDaemon(ebpf_name, ebpf_config)
+                ebpf_firewall_config = None
+                if "firewall" in ebpf_config and ebpf_config["firewall"]:
+                    ebpf_firewall_config = self.firewall_config
+
+                self.ebpf_daemons[ebpf_name] = eBPFPKTDaemon(ebpf_name, ebpf_config, ebpf_firewall_config)
                 self.update_providers(ebpf_name, ebpf_config)
                 if "log" in ebpf_config:
                     ebpf_log = eBPFPKTLog(ebpf_name, ebpf_config["log"])                    

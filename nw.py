@@ -584,11 +584,38 @@ api.add_resource(PRBOp, '/prb/<string:prb_ebpf>')
 api.add_resource(PKT, '/pkt')
 api.add_resource(PKTOp, '/pkt/<string:pkt_ebpf>')
 
+def load_included_config_file(include_config, config):
+    for config_file in include_config:
+        try:
+            cf = open(config_file)
+            partial_config = json.load(cf)
+            for key, val in partial_config.items():
+                if key in config:
+                    if type(val) is list:
+                        config[key].append(val)
+                    elif type(val) is dict:
+                        for k,v in val.items():
+                            if k not in config[key]:
+                                config[key][k] = v
+                            else:
+                                print("conflict of configuration ", k)
+                else:
+                    config[key] = val
+
+        except BaseException as e:
+            print("Exception when load include config file ", config_file, e)
+            print("Ignore the error of include config parse, continue ...")
+
 if __name__ == '__main__':
+    """
+    Usage of NW   
+    nw.py nw.conf   
+    """
     sched_params = os.sched_param(os.sched_get_priority_max(os.SCHED_RR))
     os.sched_setscheduler(0, os.SCHED_RR, sched_params)
 
     config_file_path = "./conf/nw.conf"
+    debug = False
     if len(sys.argv) == 2 and sys.argv[1]:
         config_file_path = sys.argv[1]
     
@@ -597,6 +624,12 @@ if __name__ == '__main__':
     config = json.load(config_file)
 
     config_file.close()
+
+    if "include" in config:
+        load_included_config_file(config["include"], config)
+
+    if debug:
+        print(json.dumps(config, sort_keys=True, indent=4))
 
     # Log used for context analysis without statistics
     if "audit_log_path" in config:
@@ -646,10 +679,14 @@ if __name__ == '__main__':
     events_monitor.set_lsm_controller(um_lsm_daemon)
 
     # eBPF Packet filter to replace tcpdump, hook on egress TC and ingress XDP
+    firewall_config = dict({})
+    if "firewalls" in config:
+        firewall_config = config["firewalls"]
+    
     if "umbrella_pkt" in config:
-        um_pkt_daemon = UmbrellaPKT(config["umbrella_pkt"], nw_operations, events_monitor, events_monitor.get_msg_topics())
+        um_pkt_daemon = UmbrellaPKT(config["umbrella_pkt"], firewall_config, nw_operations, events_monitor, events_monitor.get_msg_topics())
     else:
-        um_pkt_daemon = UmbrellaPKT(dict({}), nw_operations, events_monitor, events_monitor.get_msg_topics())
+        um_pkt_daemon = UmbrellaPKT(dict({}), firewall_config, nw_operations, events_monitor, events_monitor.get_msg_topics())
     um_pkt_daemon.start_all()
     events_monitor.set_pkt_controller(um_pkt_daemon)
 

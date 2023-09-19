@@ -43,6 +43,10 @@ Linux内和中的多种不同安全层级加固。
 
 ## XDP防火墙              
   NightWatch的pkt系统可以用来实现基于zone的XDP防火墙    
+  和netfilter/iptable防火墙对比的优点：
+    1. XDP可以在报文从网卡收到没有经过协议栈处理时进行丢包控制    
+    2. 可以绕过所有的协议栈网络协议报文处理    
+
 
 # eBPF的可插拔探针， MAC模块， Packet过滤器/防火墙        
   NightWatch基于BCC实现动态可更改的eBPF框架，主要包括三个主要eBPF类别：    
@@ -131,15 +135,15 @@ Linux内和中的多种不同安全层级加固。
                     "pkt_type": "xdp",                   // XDP
                     "interfaces": [                      // 挂载网络接口列表    
                         "lo",
-                        "enp2s0",
-                        "wlp1s0" 
+                        "eth0",
+                        "wlan0" 
                     ]
                 },
                 {
                     "pkt_parser": "cls_dns_filter",      // eBPF中的 classier 过滤函数 
                     "pkt_type": "classifier",            // TC classifier
                     "interfaces": [                      // 挂载网络接口列表
-                        "wlp1s0"
+                        "wlan0"
                     ]
                 }
             ],
