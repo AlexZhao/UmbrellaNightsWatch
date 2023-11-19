@@ -7,7 +7,7 @@
 #include <linux/errno.h>
 #include "ebpf/ebpf_str.h"
 
-#define MAXIMUM_EBPF_LOG_LEN 8
+#define MAXIMUM_EBPF_LOG_LEN 12
 #define MAXIMUM_EBPF_LOG_SECTION_LEN 32
 
 typedef struct ebpf_prb_log {

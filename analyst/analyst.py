@@ -8,12 +8,67 @@
 #  consume data from EventMonitor (collected from probes)
 #  initiate reaction to UmLsm
 import json
+import pwd
 
 from pygtrie import StringTrie
 from threading import Lock
 
 from analyst.application import ApplicationProfile
+from analyst.user import UserProfile
 from analyst.prophet import Prophet
+
+class UserProfileAnalyst:
+    def __init__(self, config):
+        """
+        Per User specific analyst
+        """
+        self.dispachers = dict({})
+        if "consumers" in config:
+            for key, val in config["consumers"].items():
+                self.dispachers[key] = val
+
+        self.logs = "/var/log/nw/users"
+        if "logs" in config:
+            """
+            folder to store the per user all access details 
+            """
+            try:
+                self.logs = config["logs"]["path"]
+            except BaseException as e:
+                print("Not correct configuration of log ", e)
+
+        self.monitored_users_lock = Lock()
+        self.monitored_users = dict({})
+
+    def update(self, topic, event):
+        """
+        Per topic update the events to User Profile and logs
+        """   
+        if topic in self.dispachers:
+            user_name = None
+            if "uid" in event:
+                user_name = pwd.getpwuid(int(event["uid"])).pw_name
+                self.monitored_users_lock.acquire()
+                if not user_name in self.monitored_users:
+                    self.monitored_users[user_name] = UserProfile(user_name, self.logs)
+                self.monitored_users_lock.release()
+
+                match self.dispachers[topic]:
+                    case "update_execv_access":
+                        self.update_execv_access(user_name, event)
+                    case _:
+                        print ("Not supported update method ", self.dispachers[topic], " for topic ", topic)
+
+    def update_execv_access(self, user_name, event):
+        """
+        Update User associate events 
+        """
+        try:
+            if user_name:
+                self.monitored_users[user_name].update_execv_access(event)
+        except BaseException as e:
+            """
+            """
 
 class AppProfileAnalyst:
     def __init__(self, config):
@@ -57,7 +112,9 @@ class AppProfileAnalyst:
                 case "update_execv_access":
                     self.update_execv_access(app_name, event)
                 case "update_seldom_syscall":
-                    self.update_seldom_syscall(app_name, event)                    
+                    self.update_seldom_syscall(app_name, event)          
+                case _:
+                    print ("Not supported update method ", self.dispachers[topic], " for topic ", topic)          
 
     def need_record_full_file(self, file_loc):
         key, val = self.file_access_ignore_patterns.longest_prefix(file_loc)
@@ -162,6 +219,7 @@ class Analyst:
         self.debug = False
         self.topics = topics
         self.app_profile = None
+        self.user_profile = None
         self.prophet_analysis = None
 
         self.consumer_topics = dict({})
@@ -175,14 +233,23 @@ class Analyst:
                     self.consumer_topics[topic] = []
                     self.consumer_topics[topic].append(self.app_profile)
 
+        if "user_profile" in config:
+            self.user_profile = UserProfileAnalyst(config["user_profile"])
+            for topic, _ in config["user_profile"]["consumers"].items():
+                if topic in self.consumer_topics:
+                    self.consumer_topics[topic].append(self.user_profile)
+                else:
+                    self.consumer_topics[topic] = []
+                    self.consumer_topics[topic].append(self.user_profile)
+
         if "prophet_analysis" in config:
             self.prophet_analysis = ProphetAnalyst(config["prophet_analysis"])
             for topic, _ in config["app_profile"]["consumers"].items():
                 if topic in self.consumer_topics:
-                    self.consumer_topics[topic].append(self.app_profile)
+                    self.consumer_topics[topic].append(self.prophet_analysis)
                 else:
                     self.consumer_topics[topic] = []
-                    self.consumer_topics[topic].append(self.app_profile)
+                    self.consumer_topics[topic].append(self.prophet_analysis)
 
     def get_app_profile(self):
         return self.app_profile

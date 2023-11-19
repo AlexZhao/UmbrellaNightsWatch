@@ -5,6 +5,8 @@
 //
 #include <linux/sched.h>
 #include <linux/errno.h>
+#include <linux/cred.h>
+#include <linux/uidgid.h>
 
 #include "ebpf/ebpf_exe.h"
 #include "ebpf/ebpf_log.h"
@@ -43,6 +45,14 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
     barrier_var(pid);
     put_ebpf_prb_log(event, (const char *)&pid, sizeof(pid), TYPE_I32);
 
+    struct cred *cred = NULL;
+    bpf_probe_read_kernel(&cred, sizeof(struct cred *), &task->real_cred);
+    if (cred) {
+        kuid_t uid;
+        if (!bpf_probe_read_kernel(&uid, sizeof(kuid_t), &cred->uid))
+            put_ebpf_prb_log(event, (const char *)&uid, sizeof(kuid_t), TYPE_U32);
+    }
+
     ebpf_memset(app_name, 0, sizeof(app_name));
     bpf_probe_read_user_str(app_name, sizeof(app_name), args->filename);
     put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR);
@@ -53,8 +63,9 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execve) {
         if (*argv) {
             ebpf_memset(app_name, 0, sizeof(app_name));
             rlen = bpf_probe_read_user_str(app_name, sizeof(app_name), *argv);
-            if (rlen > 0) {
-                put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR);
+            if (rlen >= 0) {
+                if (put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR) != 0)
+                    break;
                 argv ++;
             } else {
                 break;
@@ -97,6 +108,15 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execveat) {
     barrier_var(pid);
     put_ebpf_prb_log(event, (const char *)&pid, sizeof(pid), TYPE_I32);
 
+
+    struct cred *cred = NULL;
+    bpf_probe_read_kernel(&cred, sizeof(struct cred *), &task->real_cred);
+    if (cred) {
+        kuid_t uid;
+        if (!bpf_probe_read_kernel(&uid, sizeof(kuid_t), &cred->uid))
+            put_ebpf_prb_log(event, (const char *)&uid, sizeof(kuid_t), TYPE_U32);
+    }
+
     ebpf_memset(app_name, 0, sizeof(app_name));
     bpf_probe_read_user_str(app_name, sizeof(app_name), args->filename);
     put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR);
@@ -107,8 +127,9 @@ TRACEPOINT_PROBE(syscalls, sys_enter_execveat) {
         if (*argv) {
             ebpf_memset(app_name, 0, sizeof(app_name));
             rlen = bpf_probe_read_user_str(app_name, MAXIMUM_ARGV_LEN, *argv);
-            if (rlen > 0) {
-                put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR);
+            if (rlen >= 0) {
+                if (put_ebpf_prb_log(event, app_name, ebpf_strnlen(app_name, sizeof(app_name)), TYPE_STR))
+                    break;
                 argv ++;
             } else {
                 break;

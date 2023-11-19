@@ -8,6 +8,7 @@ from databridge import str2kmod
 from databridge import str2devinfo
 from databridge import str2fileinfo
 from databridge import str2netlink
+from databridge import str2uid
 
 class Dispatcher:
     def __init__(self):
@@ -62,6 +63,12 @@ class Dispatcher:
                     return None
             case "str2netlink":
                 res, data = str2netlink.convert_str_to_netlink_proto(key)
+                if res:
+                    return data
+                else:
+                    return None
+            case "str2uid":
+                res, data = str2uid.convert_str_to_uid(key)
                 if res:
                     return data
                 else:

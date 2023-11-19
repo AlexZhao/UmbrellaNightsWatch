@@ -103,6 +103,8 @@ LSM_PROBE(bprm_check_security, struct linux_binprm *bprm) {
     return 0;
 }
 
+
+// Crendital Checking
 LSM_PROBE(bprm_creds_for_exec, struct linux_binprm *bprm) {
     return 0;
 }
@@ -110,5 +112,4 @@ LSM_PROBE(bprm_creds_for_exec, struct linux_binprm *bprm) {
 LSM_PROBE(bprm_creds_from_file, struct linux_binprm *bprm, struct file *file) {
     return 0;
 }
-
 

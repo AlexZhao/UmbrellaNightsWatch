@@ -115,7 +115,7 @@ static int ebpf_strnlen(const char *src, int len) {
         }
     }
 
-    return -1;
+    return len;
 }
 
 /// @brief ebpf_strncat only can work with < 2 length of copy

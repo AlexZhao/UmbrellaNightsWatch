@@ -32,7 +32,7 @@ class ebpf_prb_log(ct.Structure):
     _fields_ = [("ebpf_log_section", ct.c_int32),
                 ("timestamp", ct.c_uint64),
                 ("func", ct.c_byte * 32),
-                ("sections", (ct.c_byte * 32) * 8)]
+                ("sections", (ct.c_byte * 32) * 12)]
 
 class sockaddr_in(ct.Structure):
     _fields_ = [("sa_family", ct.c_ushort),  # sin_family
