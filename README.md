@@ -126,6 +126,3 @@ it reuquired centralized realtime analysis of the overall system behavior of all
 
 
 Author: Zhao Zhe(Alex)
-
-![Donate](./DONATE.JPG)
-![Donate](./DONATE_Z.JPG)
