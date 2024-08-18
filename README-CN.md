@@ -277,6 +277,3 @@ consumer将json消息使用内建的函数更新:
 ```
 
 Author: Zhao Zhe(Alex)
-
-![Donate](./DONATE.JPG)
-![Donate](./DONATE_Z.JPG)
